@@ -318,5 +318,66 @@ export class ArticlesService {
       throw error;
     }
   }
+
+  /**
+   * 获取最近的文章(用于定时监控)
+   * @param since 起始时间(ISO格式)
+   * @param accountIds 公众号ID列表(可选)
+   */
+  async getRecentArticles(since: string, accountIds?: string[]) {
+    try {
+      const supabase = this.supabaseService.getClient();
+
+      let query = supabase
+        .from('wechat_articles')
+        .select('*')
+        .gte('publish_time', since)
+        .order('publish_time', { ascending: false });
+
+      // 如果指定了公众号ID列表,则筛选
+      if (accountIds && accountIds.length > 0) {
+        query = query.in('account_id', accountIds);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        this.logger.error(`获取最近文章失败: ${error.message}`);
+        throw error;
+      }
+
+      this.logger.log(`获取到 ${data.length} 篇最近文章`);
+      return data;
+    } catch (error) {
+      this.logger.error(`获取最近文章失败: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * 获取所有不同的account_id列表
+   * 用于清理孤立文章
+   */
+  async getAllAccountIds(): Promise<string[]> {
+    try {
+      const supabase = this.supabaseService.getClient();
+
+      const { data, error } = await supabase
+        .from('wechat_articles')
+        .select('account_id');
+
+      if (error) {
+        this.logger.error(`获取account_id列表失败: ${error.message}`);
+        throw error;
+      }
+
+      // 去重
+      const uniqueAccountIds = [...new Set(data.map((item: any) => item.account_id))];
+      return uniqueAccountIds.filter((id: string) => id); // 过滤掉null/undefined
+    } catch (error) {
+      this.logger.error(`获取account_id列表失败: ${error.message}`);
+      throw error;
+    }
+  }
 }
 

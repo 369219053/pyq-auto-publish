@@ -513,7 +513,7 @@
                             params.append('status', this.filters.status);
                         }
 
-                        const response = await fetch(`http://localhost:3000/api/articles?${params}`, {
+                        const response = await fetch(`https://autochat.lfdhk.com/api/articles?${params}`, {
                             headers: {
                                 'Authorization': `Bearer ${token}`,
                             },
@@ -536,7 +536,7 @@
                 async loadAccounts() {
                     try {
                         const token = localStorage.getItem('token');
-                        const response = await fetch('http://localhost:3000/api/articles/accounts/list', {
+                        const response = await fetch('https://autochat.lfdhk.com/api/articles/accounts/list', {
                             headers: {
                                 'Authorization': `Bearer ${token}`,
                             },
@@ -552,7 +552,7 @@
                 async loadStatistics() {
                     try {
                         const token = localStorage.getItem('token');
-                        const response = await fetch('http://localhost:3000/api/articles/statistics/summary', {
+                        const response = await fetch('https://autochat.lfdhk.com/api/articles/statistics/summary', {
                             headers: {
                                 'Authorization': `Bearer ${token}`,
                             },
@@ -572,7 +572,7 @@
 
                     try {
                         const token = localStorage.getItem('token');
-                        const response = await fetch(`http://localhost:3000/api/articles/${id}`, {
+                        const response = await fetch(`https://autochat.lfdhk.com/api/articles/${id}`, {
                             method: 'DELETE',
                             headers: {
                                 'Authorization': `Bearer ${token}`,
@@ -598,7 +598,7 @@
                     this.importing = true;
                     try {
                         const token = localStorage.getItem('token');
-                        const response = await fetch('http://localhost:3000/api/wechat-monitor/import-history', {
+                        const response = await fetch('https://autochat.lfdhk.com/api/wechat-monitor/import-history', {
                             method: 'POST',
                             headers: {
                                 'Authorization': `Bearer ${token}`,

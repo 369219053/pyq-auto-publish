@@ -1268,7 +1268,7 @@ export class PuppeteerService {
           if (titleText.includes(title) && contentText.includes(content)) {
             console.log(`✅ 找到匹配任务: ${title}`);
 
-            // 查找删除按钮
+            // 查找删除按钮(脚本1不需要智能识别,因为刚发布的任务不会处于执行中状态)
             const buttons = row.querySelectorAll('button');
             for (const button of buttons) {
               if (button.textContent?.includes('删除')) {
@@ -2074,10 +2074,10 @@ export class PuppeteerService {
         { timeout: 5000, fallbackDelay: 2000, description: '任务列表加载完成' }
       );
 
-      // 3. 查找并点击对应标题的删除按钮
+      // 3. 查找并智能点击对应标题的删除/停止按钮
       this.logger.log(`查找标题为"${taskTitle}"的朋友圈...`);
 
-      const deleteClicked = await page.evaluate((title) => {
+      const buttonResult = await page.evaluate((title) => {
         // 查找所有表格行
         const rows = document.querySelectorAll('tr');
 
@@ -2094,28 +2094,136 @@ export class PuppeteerService {
           }
 
           if (foundTitle) {
-            // 在这一行中查找删除按钮
+            // 在这一行中查找按钮
             const buttons = row.querySelectorAll('button');
             for (const button of buttons) {
               const text = button.textContent?.trim();
-              if (text && text.includes('删除')) {
+
+              // 🔍 智能识别: 优先查找"停止"按钮
+              if (text && text.includes('停止')) {
+                console.log('⚠️  检测到"停止"按钮,先点击停止');
                 (button as HTMLElement).click();
-                return true;
+                return { clicked: true, buttonType: 'stop' };
+              }
+
+              // 如果没有停止按钮,查找"删除"按钮
+              if (text && text.includes('删除')) {
+                console.log('✅ 检测到"删除"按钮,直接点击删除');
+                (button as HTMLElement).click();
+                return { clicked: true, buttonType: 'delete' };
               }
             }
           }
         }
 
-        return false;
+        return { clicked: false, buttonType: null };
       }, taskTitle);
 
-      if (!deleteClicked) {
-        this.logger.warn(`未找到标题为"${taskTitle}"的朋友圈`);
+      if (!buttonResult.clicked) {
+        this.logger.warn(`未找到标题为"${taskTitle}"的朋友圈或按钮`);
         await page.screenshot({ path: `debug_delete_not_found_${Date.now()}.png`, fullPage: true });
-        throw new Error(`未找到标题为"${taskTitle}"的朋友圈`);
+        throw new Error(`未找到标题为"${taskTitle}"的朋友圈或按钮`);
       }
 
-      this.logger.log('删除按钮已点击,等待确认对话框...');
+      // 🔄 如果点击的是"停止"按钮,需要确认弹窗后再点击"删除"
+      if (buttonResult.buttonType === 'stop') {
+        this.logger.log('⚠️  已点击"停止"按钮,等待确认弹窗...');
+
+        // 等待并点击确认弹窗的"确定"按钮
+        try {
+          await this.smartWait(
+            page,
+            () => {
+              // 查找Element UI对话框中的"确定"按钮
+              const dialogs = document.querySelectorAll('.el-dialog__wrapper');
+              for (const dialog of dialogs) {
+                const footer = dialog.querySelector('.el-dialog__footer');
+                if (footer) {
+                  const buttons = footer.querySelectorAll('button');
+                  for (const button of buttons) {
+                    if (button.textContent?.includes('确定')) {
+                      return true;
+                    }
+                  }
+                }
+              }
+              return false;
+            },
+            { timeout: 3000, fallbackDelay: 500, description: '停止确认弹窗出现' }
+          );
+
+          // 点击确认弹窗的"确定"按钮
+          this.logger.log('🔘 点击确认弹窗的"确定"按钮...');
+          await page.evaluate(() => {
+            const dialogs = document.querySelectorAll('.el-dialog__wrapper');
+            for (const dialog of dialogs) {
+              const footer = dialog.querySelector('.el-dialog__footer');
+              if (footer) {
+                const buttons = footer.querySelectorAll('button');
+                for (const button of buttons) {
+                  if (button.textContent?.includes('确定')) {
+                    (button as HTMLElement).click();
+                    return;
+                  }
+                }
+              }
+            }
+          });
+
+          this.logger.log('✅ 已确认停止,等待按钮变成"删除"...');
+
+          // 等待2秒让任务停止并更新按钮状态
+          await new Promise(resolve => setTimeout(resolve, 2000));
+
+        } catch (error) {
+          this.logger.warn('未检测到确认弹窗,可能已自动关闭');
+        }
+
+        // 再次查找并点击"删除"按钮
+        this.logger.log('🔄 重新查找"删除"按钮...');
+
+        const deleteClicked = await page.evaluate((title) => {
+          const rows = document.querySelectorAll('tr');
+
+          for (const row of rows) {
+            const cells = row.querySelectorAll('td');
+            let foundTitle = false;
+
+            for (const cell of cells) {
+              if (cell.textContent?.includes(title)) {
+                foundTitle = true;
+                break;
+              }
+            }
+
+            if (foundTitle) {
+              const buttons = row.querySelectorAll('button');
+              for (const button of buttons) {
+                const text = button.textContent?.trim();
+                if (text && text.includes('删除')) {
+                  console.log('✅ 找到"删除"按钮,点击删除');
+                  (button as HTMLElement).click();
+                  return true;
+                }
+              }
+            }
+          }
+
+          return false;
+        }, taskTitle);
+
+        if (!deleteClicked) {
+          this.logger.error('停止后未找到"删除"按钮');
+          await page.screenshot({ path: `debug_delete_after_stop_not_found_${Date.now()}.png`, fullPage: true });
+          throw new Error('停止后未找到"删除"按钮');
+        }
+
+        this.logger.log('✅ "删除"按钮已点击');
+      } else {
+        this.logger.log('✅ "删除"按钮已点击');
+      }
+
+      this.logger.log('等待确认对话框...');
 
       await this.smartWait(
         page,

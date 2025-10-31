@@ -473,6 +473,7 @@
                                 </div>
                                 <div class="article-actions">
                                     <button class="btn-rewrite" @click.stop="goToRewrite(article)">转写</button>
+                                    <button class="btn-delete" @click.stop="deleteArticle(article)" style="margin-left: 8px; background: #ff4d4f; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">删除</button>
                                 </div>
                             </li>
                         </ul>
@@ -603,7 +604,7 @@
                     syncInterval: 30,
                     showArticleModal: false,
                     currentArticle: null,
-                    apiBaseUrl: 'http://localhost:3000/api',
+                    apiBaseUrl: 'https://autochat.lfdhk.com/api',
                     rssApiUrl: 'http://localhost:8001/api/v1/wx'
                 }
             },
@@ -973,15 +974,14 @@
                     }
                 },
                 async updateSubscription(mpId) {
-                    if (!confirm('确定要手动更新这个公众号的文章吗?\n将爬取最近10页的文章,可能需要几分钟时间。')) {
+                    if (!confirm('确定要同步最新文章吗?')) {
                         return;
                     }
 
                     try {
                         const token = localStorage.getItem('token');
 
-                        // 显示加载提示
-                        alert('开始更新文章,请稍候...\n这可能需要几分钟时间,请不要关闭页面。');
+                        console.log('🚀 开始同步文章...');
 
                         // 1. 触发we-mp-rss爬取
                         const updateResponse = await fetch(`${this.apiBaseUrl}/wechat-monitor/subscriptions/${mpId}/update?pages=10`, {
@@ -993,7 +993,7 @@
                         const updateData = await updateResponse.json();
 
                         if (updateData.code === 0) {
-                            alert('爬取成功!正在导入文章到数据库...');
+                            console.log('✅ we-mp-rss爬取完成,等待5秒后导入...');
 
                             // 2. 等待5秒让we-mp-rss完成爬取
                             await new Promise(resolve => setTimeout(resolve, 5000));
@@ -1014,20 +1014,23 @@
 
                             if (importData.success) {
                                 const imported = importData.totalImported || importData.data?.totalImported || 0;
-                                alert(`导入成功!共导入 ${imported} 篇文章`);
+                                console.log(`✅ 同步完成,共导入 ${imported} 篇新文章`);
 
-                                // 4. 重新加载订阅列表和文章列表
+                                // 重新加载订阅列表和文章列表
                                 await this.loadSubscriptions();
                                 await this.loadArticles();
+
+                                // 不弹窗,静默刷新
                             } else {
-                                alert('导入失败: ' + (importData.message || '未知错误'));
+                                console.error('导入失败:', importData.message);
+                                alert('同步失败: ' + (importData.message || '未知错误'));
                             }
                         } else {
-                            alert(updateData.message || '更新失败');
+                            alert('同步失败: ' + (updateData.message || '未知错误'));
                         }
                     } catch (error) {
-                        console.error('更新失败:', error);
-                        alert('更新失败: ' + error.message);
+                        console.error('同步失败:', error);
+                        alert('同步失败: ' + error.message);
                     }
                 },
                 formatDate(timestamp) {
@@ -1141,6 +1144,35 @@
                     } catch (error) {
                         console.error('转写失败:', error);
                         alert('转写失败: ' + error.message);
+                    }
+                },
+                // 删除文章
+                async deleteArticle(article) {
+                    if (!confirm(`确定要删除文章"${article.title}"吗?`)) {
+                        return;
+                    }
+
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch(`${this.apiBaseUrl}/articles/${article.id}`, {
+                            method: 'DELETE',
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            console.log('✅ 文章删除成功');
+                            // 重新加载文章列表
+                            await this.loadArticles();
+                        } else {
+                            alert('删除失败: ' + (data.message || '未知错误'));
+                        }
+                    } catch (error) {
+                        console.error('删除文章失败:', error);
+                        alert('删除失败: ' + error.message);
                     }
                 }
             }

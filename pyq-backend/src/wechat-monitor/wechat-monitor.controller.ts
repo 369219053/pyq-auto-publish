@@ -164,6 +164,7 @@ export class WechatMonitorController {
 
   /**
    * 定时同步任务 - 方案三:定时自动同步
+   * 根据订阅列表,同步每个订阅的所有文章
    */
   @Post('sync-articles')
   async syncArticles() {
@@ -212,6 +213,16 @@ export class WechatMonitorController {
         error: error.message,
       });
     }
+  }
+
+  /**
+   * 清理孤立文章 - 删除不在订阅列表中的公众号的文章
+   * POST /api/wechat-monitor/clean-orphan-articles
+   */
+  @Post('clean-orphan-articles')
+  async cleanOrphanArticles() {
+    this.logger.log('开始清理孤立文章');
+    return await this.wechatMonitorService.cleanOrphanArticles();
   }
 }
 

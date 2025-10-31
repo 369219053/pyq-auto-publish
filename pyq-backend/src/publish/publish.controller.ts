@@ -12,7 +12,7 @@ import {
 import { PublishService } from './publish.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
-@Controller('api/publish')
+@Controller('publish')
 @UseGuards(JwtAuthGuard)
 export class PublishController {
   constructor(private readonly publishService: PublishService) {}
@@ -30,17 +30,32 @@ export class PublishController {
         rewriteId: body.rewriteId,
         taskTitle: body.taskTitle,
         content: body.content,
+        contentType: body.contentType,
         images: body.images,
         wechatAccount: body.wechatAccount,
         publishTime: new Date(body.publishTime),
         isImmediate: body.isImmediate,
         randomDelayMinutes: body.randomDelayMinutes,
+        visibilityRange: body.visibilityRange,
+        selectedTags: body.selectedTags,
+        comments: body.comments,
+        useLocation: body.useLocation,
+        randomContent: body.randomContent,
+        endTime: body.endTime ? new Date(body.endTime) : undefined,
       });
+
+      // 🚀 如果是立即发布,创建任务后立即执行
+      if (body.isImmediate) {
+        this.publishService.executeTaskImmediately(task.id).catch((error) => {
+          // 异步执行,不阻塞响应,错误会记录到数据库
+          console.error('立即执行任务失败:', error);
+        });
+      }
 
       return {
         success: true,
         data: task,
-        message: '发布任务创建成功',
+        message: body.isImmediate ? '发布任务创建成功,正在执行...' : '发布任务创建成功',
       };
     } catch (error) {
       throw new HttpException(

@@ -1,16 +1,21 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
 import axios from 'axios';
+import { PuppeteerService } from '../puppeteer/puppeteer.service';
 
 @Injectable()
 export class PublishService implements OnModuleInit {
   private readonly logger = new Logger(PublishService.name);
   private supabase: SupabaseClient;
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    @Inject(forwardRef(() => PuppeteerService))
+    private puppeteerService: PuppeteerService,
+  ) {
     const supabaseUrl = this.configService.get<string>('SUPABASE_URL');
     const supabaseKey = this.configService.get<string>('SUPABASE_KEY');
     this.supabase = createClient(supabaseUrl, supabaseKey);
@@ -74,29 +79,56 @@ CREATE INDEX IF NOT EXISTS idx_publish_tasks_user_id ON publish_tasks(user_id);
     rewriteId?: string;
     taskTitle?: string;
     content: string;
+    contentType?: string;
     images?: string[];
     wechatAccount?: string;
     publishTime: Date;
     isImmediate?: boolean;
     randomDelayMinutes?: number;
+    visibilityRange?: string;
+    selectedTags?: string[];
+    comments?: string[];
+    useLocation?: boolean;
+    randomContent?: string;
+    endTime?: Date;
   }) {
     try {
+      const insertData: any = {
+        user_id: taskData.userId,
+        rewrite_id: taskData.rewriteId,
+        task_title: taskData.taskTitle,
+        content: taskData.content,
+        images: taskData.images || [],
+        wechat_account: taskData.wechatAccount,
+        publish_time: taskData.publishTime.toISOString(),
+        is_immediate: taskData.isImmediate || false,
+        random_delay_minutes: taskData.randomDelayMinutes || 0,
+        status: 'pending',
+      };
+
+      // 添加新字段(数据库已经添加这些字段)
+      if (taskData.visibilityRange !== undefined) {
+        insertData.visibility_range = taskData.visibilityRange;
+      }
+      if (taskData.selectedTags !== undefined) {
+        insertData.selected_tags = taskData.selectedTags;
+      }
+      if (taskData.comments !== undefined) {
+        insertData.comments = taskData.comments;
+      }
+      if (taskData.useLocation !== undefined) {
+        insertData.use_location = taskData.useLocation;
+      }
+      if (taskData.randomContent !== undefined) {
+        insertData.random_content = taskData.randomContent;
+      }
+      if (taskData.endTime !== undefined) {
+        insertData.end_time = taskData.endTime ? taskData.endTime.toISOString() : null;
+      }
+
       const { data, error } = await this.supabase
         .from('publish_tasks')
-        .insert([
-          {
-            user_id: taskData.userId,
-            rewrite_id: taskData.rewriteId,
-            task_title: taskData.taskTitle,
-            content: taskData.content,
-            images: taskData.images || [],
-            wechat_account: taskData.wechatAccount,
-            publish_time: taskData.publishTime.toISOString(),
-            is_immediate: taskData.isImmediate || false,
-            random_delay_minutes: taskData.randomDelayMinutes || 0,
-            status: 'pending',
-          },
-        ])
+        .insert([insertData])
         .select()
         .single();
 
@@ -106,6 +138,16 @@ CREATE INDEX IF NOT EXISTS idx_publish_tasks_user_id ON publish_tasks(user_id);
       }
 
       this.logger.log(`发布任务创建成功: ${data.id}`);
+
+      // 如果是立即发布,立即执行任务
+      if (taskData.isImmediate) {
+        this.logger.log(`🚀 检测到立即发布任务,开始执行...`);
+        // 异步执行,不阻塞返回
+        this.executeTaskImmediately(data.id).catch(err => {
+          this.logger.error(`立即执行任务失败: ${err.message}`);
+        });
+      }
+
       return data;
     } catch (error) {
       this.logger.error('创建发布任务异常:', error);
@@ -114,7 +156,8 @@ CREATE INDEX IF NOT EXISTS idx_publish_tasks_user_id ON publish_tasks(user_id);
   }
 
   /**
-   * 获取待发布的任务
+   * 获取待发布的任务 (仅返回定时发布的任务)
+   * 立即发布的任务会在创建时直接执行,不需要轮询
    */
   async getPendingTasks() {
     try {
@@ -124,6 +167,7 @@ CREATE INDEX IF NOT EXISTS idx_publish_tasks_user_id ON publish_tasks(user_id);
         .from('publish_tasks')
         .select('*')
         .eq('status', 'pending')
+        .eq('is_immediate', false)  // 只获取定时发布的任务
         .lte('publish_time', now)
         .order('publish_time', { ascending: true });
 
@@ -229,7 +273,28 @@ CREATE INDEX IF NOT EXISTS idx_publish_tasks_user_id ON publish_tasks(user_id);
     for (let i = 0; i < imageUrls.length; i++) {
       try {
         const imageUrl = imageUrls[i];
-        const ext = path.extname(imageUrl).split('?')[0] || '.jpg';
+
+        // 从URL中提取图片格式
+        let ext = '.jpg'; // 默认扩展名
+
+        // 尝试从URL参数中提取wx_fmt参数
+        const urlObj = new URL(imageUrl);
+        const urlParam = urlObj.searchParams.get('url');
+        if (urlParam) {
+          // 解码URL参数
+          const decodedUrl = decodeURIComponent(urlParam);
+          // 从解码后的URL中查找wx_fmt参数
+          const fmtMatch = decodedUrl.match(/wx_fmt=(\w+)/);
+          if (fmtMatch) {
+            const format = fmtMatch[1];
+            if (format === 'png') {
+              ext = '.png';
+            } else if (format === 'jpeg' || format === 'jpg') {
+              ext = '.jpg';
+            }
+          }
+        }
+
         const filename = `image_${Date.now()}_${i}${ext}`;
         const savePath = path.join(tempDir, filename);
 
@@ -274,6 +339,65 @@ CREATE INDEX IF NOT EXISTS idx_publish_tasks_user_id ON publish_tasks(user_id);
       } catch (error) {
         this.logger.error(`清理临时文件失败: ${imagePath}`, error);
       }
+    }
+  }
+
+  /**
+   * 🚀 立即执行发布任务
+   */
+  async executeTaskImmediately(taskId: string) {
+    this.logger.log(`🚀 开始立即执行任务: ${taskId}`);
+
+    try {
+      // 1. 获取任务详情
+      const { data: task, error } = await this.supabase
+        .from('publish_tasks')
+        .select('*')
+        .eq('id', taskId)
+        .single();
+
+      if (error || !task) {
+        throw new Error(`任务不存在: ${taskId}`);
+      }
+
+      // 2. 更新任务状态为执行中
+      await this.supabase
+        .from('publish_tasks')
+        .update({ status: 'processing' })
+        .eq('id', taskId);
+
+      // 3. 调用Puppeteer执行发布
+      this.logger.log(`📝 任务内容: ${task.content}`);
+      this.logger.log(`🖼️  图片数量: ${task.images?.length || 0}`);
+
+      const result = await this.puppeteerService.publishToDuixueqiu(task);
+
+      // 4. 更新任务状态为成功
+      await this.supabase
+        .from('publish_tasks')
+        .update({
+          status: 'completed',
+          duixueqiu_task_id: result.taskId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', taskId);
+
+      this.logger.log(`✅ 任务执行成功: ${taskId}`);
+      return result;
+    } catch (error) {
+      this.logger.error(`❌ 任务执行失败: ${taskId}`, error);
+
+      // 更新任务状态为失败
+      await this.supabase
+        .from('publish_tasks')
+        .update({
+          status: 'failed',
+          error_message: error.message,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', taskId);
+
+      throw error;
     }
   }
 }

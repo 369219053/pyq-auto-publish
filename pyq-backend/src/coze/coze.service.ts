@@ -54,10 +54,14 @@ export class CozeService {
       );
 
       this.logger.log('Coze API创建对话成功');
+      this.logger.log('Coze API响应数据:', JSON.stringify(createResponse.data, null, 2));
+
       const conversationId = createResponse.data?.data?.conversation_id;
       const chatId = createResponse.data?.data?.id;
 
       if (!conversationId || !chatId) {
+        this.logger.error('无法从响应中获取conversation_id或chat_id');
+        this.logger.error('响应结构:', createResponse.data);
         throw new Error('未能获取conversation_id或chat_id');
       }
 
