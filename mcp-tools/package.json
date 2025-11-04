@@ -1,0 +1,50 @@
+{
+  "name": "custom-mcp-tools",
+  "version": "1.0.0",
+  "description": "自定义MCP工具集：文档解析器和天气时间服务器",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start:doc-parser": "node document-parser-server.js",
+    "start:weather-time": "node weather-time-server.js",
+    "install-deps": "npm install",
+    "test:doc-parser": "echo '测试文档解析服务器...' && node test-doc-parser.js",
+    "test:weather-time": "echo '测试天气时间服务器...' && node test-weather-time.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "document-parser",
+    "weather",
+    "time",
+    "timezone",
+    "pdf",
+    "word",
+    "ocr"
+  ],
+  "author": "小牛马团队",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.0"
+  },
+  "optionalDependencies": {
+    "pdf-parse": "^1.1.1",
+    "mammoth": "^1.6.0",
+    "node-fetch": "^3.3.2",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "本地自定义MCP工具"
+  },
+  "bugs": {
+    "url": "联系小牛马团队"
+  },
+  "homepage": "本地MCP工具集"
+}
