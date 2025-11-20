@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>公众号监控 - 朋友圈自动发布系统</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #F5F7FA;
+        }
+
+        /* 顶部导航栏 */
+        .top-nav {
+            background: #FFFFFF;
+            border-bottom: 1px solid #E6E9ED;
+            padding: 0 24px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, #0052CC 0%, #0065FF 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 18px;
+        }
+
+        .system-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1A1A1A;
+        }
+
+        .user-section {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .btn-back {
+            padding: 8px 16px;
+            background: #F5F7FA;
+            border: 1px solid #E6E9ED;
+            border-radius: 6px;
+            color: #4A5568;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .btn-back:hover {
+            background: #E6E9ED;
+        }
+
+        .btn-logout {
+            padding: 8px 16px;
+            background: #FFFFFF;
+            border: 1px solid #0052CC;
+            border-radius: 6px;
+            color: #0052CC;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .btn-logout:hover {
+            background: #E6F4FF;
+        }
+
+        /* 主内容区域 */
+        .main-container {
+            margin-top: 60px;
+            padding: 24px;
+            min-height: calc(100vh - 60px);
+        }
+
+        .page-header {
+            background: #FFFFFF;
+            border-radius: 8px;
+            padding: 20px 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+
+        .page-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #1A1A1A;
+            margin-bottom: 8px;
+        }
+
+        .page-description {
+            font-size: 14px;
+            color: #718096;
+        }
+
+        /* iframe容器 */
+        .iframe-container {
+            background: #FFFFFF;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            height: calc(100vh - 200px);
+        }
+
+        .iframe-wrapper {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        /* 加载动画 */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #E6E9ED;
+            border-top-color: #0052CC;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* 提示信息 */
+        .info-banner {
+            background: #E6F4FF;
+            border: 1px solid #91D5FF;
+            border-radius: 6px;
+            padding: 12px 16px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .info-icon {
+            color: #0052CC;
+            font-size: 18px;
+        }
+
+        .info-text {
+            color: #1A1A1A;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- 加载动画 -->
+        <div v-if="loading" class="loading-overlay">
+            <div class="loading-spinner"></div>
+        </div>
+
+        <!-- 顶部导航栏 -->
+        <div class="top-nav">
+            <div class="logo-section">
+                <div class="logo">朋</div>
+                <div class="system-title">朋友圈自动发布系统</div>
+            </div>
+            <div class="user-section">
+                <button class="btn-back" @click="goBack">返回主页</button>
+                <button class="btn-logout" @click="logout">退出登录</button>
+            </div>
+        </div>
+
+        <!-- 主内容区域 -->
+        <div class="main-container">
+            <!-- 页面标题 -->
+            <div class="page-header">
+                <div class="page-title">公众号监控管理</div>
+                <div class="page-description">搜索并订阅公众号,自动获取最新文章内容</div>
+            </div>
+
+            <!-- 提示信息 -->
+            <div class="info-banner">
+                <span class="info-icon">ℹ️</span>
+                <span class="info-text">
+                    使用说明: 在下方搜索框输入公众号名称,点击"订阅"按钮添加监控。系统会自动获取该公众号的最新文章。
+                </span>
+            </div>
+
+            <!-- we-mp-rss iframe -->
+            <div class="iframe-container">
+                <iframe 
+                    ref="weMpRssFrame"
+                    class="iframe-wrapper"
+                    :src="weMpRssUrl"
+                    @load="onIframeLoad"
+                ></iframe>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    loading: true,
+                    weMpRssUrl: 'http://localhost:8001',
+                    userData: null
+                }
+            },
+            mounted() {
+                // 检查登录状态
+                this.checkAuth();
+                
+                // 监听iframe消息
+                window.addEventListener('message', this.handleIframeMessage);
+            },
+            beforeUnmount() {
+                window.removeEventListener('message', this.handleIframeMessage);
+            },
+            methods: {
+                checkAuth() {
+                    const token = localStorage.getItem('token');
+                    const user = localStorage.getItem('user');
+
+                    if (!token || !user) {
+                        alert('请先登录');
+                        window.location.href = 'login.html';
+                        return;
+                    }
+
+                    this.userData = JSON.parse(user);
+                },
+                onIframeLoad() {
+                    this.loading = false;
+                    console.log('we-mp-rss页面加载完成');
+                },
+                handleIframeMessage(event) {
+                    // 处理来自iframe的消息
+                    if (event.origin !== 'http://localhost:8001') return;
+                    
+                    console.log('收到iframe消息:', event.data);
+                },
+                goBack() {
+                    window.location.href = 'index.html';
+                },
+                logout() {
+                    if (confirm('确定要退出登录吗?')) {
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('user');
+                        sessionStorage.setItem('isLogout', 'true');
+                        window.location.href = 'login.html';
+                    }
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
+

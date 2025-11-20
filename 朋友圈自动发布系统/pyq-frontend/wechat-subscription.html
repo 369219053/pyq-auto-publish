@@ -1,0 +1,1184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>公众号监控 - 朋友圈自动发布系统</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f0f2f5;
+            min-height: 100vh;
+            padding: 0;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        .container {
+            max-width: 100%;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .header {
+            display: none;  /* 隐藏header,因为在iframe中不需要 */
+        }
+
+        .header-actions {
+            display: none;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        .btn-danger {
+            background: #ff4757;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #ee5a6f;
+        }
+
+        .content {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 20px;
+            height: 100vh;
+            padding: 20px;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            height: calc(100vh - 40px);
+            overflow-y: auto;
+        }
+
+        .sidebar h2 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .subscription-list {
+            list-style: none;
+        }
+
+        .subscription-item {
+            padding: 12px;
+            margin-bottom: 8px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .subscription-item:hover {
+            background: #f5f5f5;
+        }
+
+        .subscription-item.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .subscription-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #ddd;
+        }
+
+        .subscription-info {
+            flex: 1;
+        }
+
+        .subscription-name {
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .subscription-count {
+            font-size: 12px;
+            opacity: 0.7;
+        }
+
+        .main-content {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            height: calc(100vh - 40px);
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 20px;
+            border-bottom: 2px solid #f0f0f0;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.3s;
+        }
+
+        .tab.active {
+            border-bottom-color: #667eea;
+            color: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .qr-login {
+            text-align: center;
+            padding: 40px;
+        }
+
+        .qr-code {
+            width: 300px;
+            height: 300px;
+            margin: 20px auto;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f9f9f9;
+        }
+
+        .qr-code img {
+            max-width: 100%;
+            max-height: 100%;
+        }
+
+        .qr-tips {
+            color: #666;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+
+        .add-subscription-form {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .article-list {
+            list-style: none;
+        }
+
+        .article-item {
+            padding: 15px;
+            border-bottom: 1px solid #f0f0f0;
+            transition: all 0.3s;
+            position: relative;
+        }
+
+        .article-item:hover {
+            background: #f9f9f9;
+        }
+
+        .article-content {
+            cursor: pointer;
+            flex: 1;
+        }
+
+        .article-title {
+            font-size: 16px;
+            font-weight: 500;
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .article-meta {
+            font-size: 12px;
+            color: #999;
+            display: flex;
+            gap: 15px;
+        }
+
+        .article-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .btn-rewrite {
+            padding: 6px 12px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.3s;
+        }
+
+        .btn-rewrite:hover {
+            background: #5568d3;
+        }
+
+        .settings-form {
+            max-width: 600px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .empty {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            max-width: 800px;
+            height: 700px;
+            max-height: 700px;
+            overflow-y: auto;
+            width: 90%;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            position: sticky;
+            top: 0;
+            background: white;
+            z-index: 10;
+            padding: 15px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .modal-title {
+            font-size: 20px;
+            font-weight: 500;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #999;
+        }
+
+        .article-content {
+            line-height: 1.8;
+            color: #333;
+        }
+
+        /* 浮动关闭按钮 */
+        .floating-close-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: #667eea;
+            color: white;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .floating-close-btn:hover {
+            background: #5568d3;
+            transform: scale(1.1);
+        }
+
+        .article-content img {
+            max-width: 100%;
+            height: auto;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="container">
+            <div class="header">
+                <h1>公众号监控</h1>
+                <div class="header-actions">
+                    <button class="btn btn-secondary" @click="goBack">返回首页</button>
+                    <button class="btn btn-primary" @click="refreshData">刷新数据</button>
+                </div>
+            </div>
+
+            <div class="content">
+                <div class="sidebar">
+                    <h2>订阅列表</h2>
+                    <ul class="subscription-list">
+                        <li class="subscription-item"
+                            :class="{active: selectedMp === null}"
+                            @click="selectMp(null)">
+                            <div class="subscription-info">
+                                <div class="subscription-name">全部公众号</div>
+                                <div class="subscription-count">{{ allArticlesCount }} 篇文章</div>
+                            </div>
+                        </li>
+                        <li v-for="mp in subscriptions"
+                            :key="mp.id"
+                            class="subscription-item"
+                            :class="{active: selectedMp === mp.id}"
+                            @click="selectMp(mp.id)">
+                            <img :src="getProxyImageUrl(mp.mp_cover || mp.round_head_img || mp.avatar)"
+                                 :onerror="`this.src='https://via.placeholder.com/40'`"
+                                 class="subscription-avatar">
+                            <div class="subscription-info">
+                                <div class="subscription-name">{{ mp.mp_name || mp.nickname || mp.name }}</div>
+                                <div class="subscription-count">{{ mp.article_count || 0 }} 篇文章</div>
+                            </div>
+                            <button class="btn btn-primary" style="padding: 5px 10px; font-size: 12px; margin-right: 5px;" @click.stop="updateSubscription(mp.id)" title="手动更新文章">
+                                🔄
+                            </button>
+                            <button class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;" @click.stop="deleteSubscription(mp.id)">
+                                删除
+                            </button>
+                        </li>
+                    </ul>
+                    <button class="btn btn-primary" style="width: 100%; margin-top: 15px;" @click="activeTab = 'add'">
+                        添加订阅
+                    </button>
+                </div>
+
+                <div class="main-content">
+                    <div class="tabs">
+                        <div class="tab" :class="{active: activeTab === 'articles'}" @click="activeTab = 'articles'">
+                            文章列表
+                        </div>
+                        <div class="tab" :class="{active: activeTab === 'login'}" @click="activeTab = 'login'">
+                            扫码登录
+                        </div>
+                        <div class="tab" :class="{active: activeTab === 'add'}" @click="activeTab = 'add'">
+                            添加订阅
+                        </div>
+                        <div class="tab" :class="{active: activeTab === 'settings'}" @click="activeTab = 'settings'">
+                            监控设置
+                        </div>
+                    </div>
+
+                    <!-- 文章列表 -->
+                    <div class="tab-content" :class="{active: activeTab === 'articles'}">
+                        <div v-if="loading" class="loading">加载中...</div>
+                        <div v-else-if="articles.length === 0" class="empty">暂无文章</div>
+                        <ul v-else class="article-list">
+                            <li v-for="article in articles" :key="article.id" class="article-item">
+                                <div class="article-content" @click="viewArticle(article)">
+                                    <div class="article-title">{{ article.title }}</div>
+                                    <div class="article-meta">
+                                        <span>{{ article.mp_name }}</span>
+                                        <span>发布时间: {{ formatDate(article.publish_time) }}</span>
+                                    </div>
+                                </div>
+                                <div class="article-actions">
+                                    <button class="btn-rewrite" @click.stop="goToRewrite(article)">转写</button>
+                                    <button class="btn-delete" @click.stop="deleteArticle(article)" style="margin-left: 8px; background: #ff4d4f; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">删除</button>
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- 扫码登录 -->
+                    <div class="tab-content" :class="{active: activeTab === 'login'}">
+                        <div class="qr-login">
+                            <h2>微信公众平台扫码登录</h2>
+                            <div class="qr-code">
+                                <img v-if="qrCodeUrl" :src="qrCodeUrl" alt="二维码">
+                                <div v-else>{{ qrStatus }}</div>
+                            </div>
+                            <div class="qr-tips">请使用微信扫描二维码登录公众平台</div>
+                            <button class="btn btn-primary" @click="getQrCode" style="margin-top: 20px;">
+                                {{ qrCodeUrl ? '刷新二维码' : '获取二维码' }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 添加订阅 -->
+                    <div class="tab-content" :class="{active: activeTab === 'add'}">
+                        <div class="add-subscription-form">
+                            <h2 style="margin-bottom: 20px;">添加公众号订阅</h2>
+
+                            <!-- 搜索公众号 -->
+                            <div class="form-group">
+                                <label>搜索公众号</label>
+                                <div style="display: flex; gap: 10px;">
+                                    <input v-model="searchKeyword" type="text" placeholder="请输入公众号名称,如:刀仔" style="flex: 1;">
+                                    <button class="btn btn-primary" @click="searchMp">搜索</button>
+                                </div>
+                            </div>
+
+                            <!-- 搜索结果 -->
+                            <div v-if="searchResults.length > 0" style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 10px;">搜索结果 (点击选择):</label>
+                                <div style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px;">
+                                    <div v-for="mp in searchResults"
+                                         :key="mp.fakeid || mp.id"
+                                         @click="selectSearchResult(mp)"
+                                         style="padding: 12px; border-bottom: 1px solid #f0f0f0; cursor: pointer; display: flex; align-items: center; gap: 10px;"
+                                         :style="{background: selectedMpData?.fakeid === mp.fakeid ? '#e6f4ff' : 'white'}">
+                                        <img :src="mp.round_head_img || 'https://via.placeholder.com/40'"
+                                             style="width: 40px; height: 40px; border-radius: 50%;">
+                                        <div style="flex: 1;">
+                                            <div style="font-weight: 500;">{{ mp.nickname }}</div>
+                                            <div style="font-size: 12px; color: #999;">{{ mp.signature || '暂无简介' }}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 已选择的公众号信息 -->
+                            <div v-if="selectedMpData" style="margin-bottom: 20px; padding: 15px; background: #f9f9f9; border-radius: 5px;">
+                                <div style="font-weight: 500; margin-bottom: 10px;">已选择:</div>
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <img :src="selectedMpData.round_head_img || 'https://via.placeholder.com/40'"
+                                         style="width: 50px; height: 50px; border-radius: 50%;">
+                                    <div>
+                                        <div style="font-weight: 500;">{{ selectedMpData.nickname }}</div>
+                                        <div style="font-size: 12px; color: #999;">ID: {{ selectedMpData.fakeid }}</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button class="btn btn-primary" @click="addSubscription" :disabled="!selectedMpData">
+                                {{ selectedMpData ? '添加订阅' : '请先搜索并选择公众号' }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 监控设置 -->
+                    <div class="tab-content" :class="{active: activeTab === 'settings'}">
+                        <div class="settings-form">
+                            <h2 style="margin-bottom: 20px;">监控频率设置</h2>
+                            <div class="form-group">
+                                <label>同步间隔(分钟)</label>
+                                <input v-model.number="syncInterval" type="number" min="1" placeholder="请输入同步间隔">
+                            </div>
+                            <button class="btn btn-primary" @click="saveSyncInterval">保存设置</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 文章详情弹窗 -->
+        <div class="modal" :class="{active: showArticleModal}">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title">{{ currentArticle?.title }}</h2>
+                    <button class="close-btn" @click="showArticleModal = false">&times;</button>
+                </div>
+                <div class="article-content" v-html="processArticleContent(currentArticle?.content)"></div>
+            </div>
+            <!-- 浮动关闭按钮 -->
+            <button v-if="showArticleModal" class="floating-close-btn" @click="showArticleModal = false" title="关闭文章">
+                ✕
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    activeTab: 'articles',
+                    loading: false,
+                    subscriptions: [],
+                    articles: [],
+                    selectedMp: null,
+                    totalArticles: 0,
+                    allArticlesCount: 0,  // 所有文章的总数
+                    qrCodeUrl: '',
+                    qrStatus: '点击按钮获取二维码',
+                    qrCheckInterval: null,
+                    searchKeyword: '',
+                    searchResults: [],
+                    selectedMpData: null,
+                    newSubscription: {
+                        name: '',
+                        mp_id: '',
+                        description: ''
+                    },
+                    syncInterval: 30,
+                    showArticleModal: false,
+                    currentArticle: null,
+                    apiBaseUrl: 'https://autochat.lfdhk.com/api',
+                    rssApiUrl: 'http://localhost:8001/api/v1/wx'
+                }
+            },
+            mounted() {
+                this.checkAuth();
+                this.loadSubscriptions();
+                this.loadArticles();
+                this.loadSyncInterval();
+            },
+            beforeUnmount() {
+                if (this.qrCheckInterval) {
+                    clearInterval(this.qrCheckInterval);
+                }
+            },
+            methods: {
+                checkAuth() {
+                    const token = localStorage.getItem('token');
+                    if (!token) {
+                        window.location.href = 'login.html';
+                    }
+                },
+                getAuthHeaders() {
+                    return {
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+                        'Content-Type': 'application/json'
+                    };
+                },
+                async loadSubscriptions() {
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch(`${this.apiBaseUrl}/wechat-monitor/subscriptions`, {
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+                        const data = await response.json();
+                        console.log('订阅列表响应:', data);
+
+                        if (data.code === 0 && data.data) {
+                            // we-mp-rss返回的数据结构可能是 {code: 0, data: {list: [...]}} 或 {code: 0, data: [...]}
+                            let subscriptions = Array.isArray(data.data) ? data.data : (data.data.list || []);
+
+                            // 为每个订阅获取文章数量
+                            for (let sub of subscriptions) {
+                                try {
+                                    const countResponse = await fetch(`${this.apiBaseUrl}/articles?account_id=${sub.id || sub.mp_id}&page=1&pageSize=1`, {
+                                        headers: {
+                                            'Authorization': `Bearer ${token}`
+                                        }
+                                    });
+                                    const countData = await countResponse.json();
+                                    sub.article_count = countData.total || 0;
+                                } catch (error) {
+                                    console.error('获取文章数量失败:', error);
+                                    sub.article_count = 0;
+                                }
+                            }
+
+                            this.subscriptions = subscriptions;
+                            console.log('订阅列表(含文章数):', this.subscriptions);
+                        }
+                    } catch (error) {
+                        console.error('加载订阅列表失败:', error);
+                    }
+                },
+                async loadArticles() {
+                    this.loading = true;
+                    try {
+                        const token = localStorage.getItem('token');
+                        let url = `${this.apiBaseUrl}/articles?page=1&pageSize=100`;
+
+                        // 如果选中了特定公众号,添加筛选参数
+                        if (this.selectedMp) {
+                            url += `&account_id=${this.selectedMp}`;
+                        }
+
+                        const response = await fetch(url, {
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+                        const data = await response.json();
+                        console.log('文章列表响应:', data);
+
+                        this.articles = data.data || [];
+                        this.totalArticles = data.total || 0;
+
+                        // 如果没有选中特定公众号,更新所有文章总数
+                        if (!this.selectedMp) {
+                            this.allArticlesCount = data.total || 0;
+                        }
+                    } catch (error) {
+                        console.error('加载文章失败:', error);
+                        alert('加载文章失败: ' + error.message);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                async loadSyncInterval() {
+                    try {
+                        const response = await fetch(`${this.apiBaseUrl}/config/sync-interval`, {
+                            headers: this.getAuthHeaders()
+                        });
+                        const data = await response.json();
+                        if (data.success) {
+                            this.syncInterval = data.data.interval_minutes;
+                        }
+                    } catch (error) {
+                        console.error('加载同步间隔失败:', error);
+                    }
+                },
+                async saveSyncInterval() {
+                    try {
+                        const response = await fetch(`${this.apiBaseUrl}/config/sync-interval`, {
+                            method: 'POST',
+                            headers: this.getAuthHeaders(),
+                            body: JSON.stringify({ interval_minutes: this.syncInterval })
+                        });
+                        const data = await response.json();
+                        if (data.success) {
+                            alert('保存成功!');
+                        } else {
+                            alert(data.message || '保存失败');
+                        }
+                    } catch (error) {
+                        console.error('保存同步间隔失败:', error);
+                        alert('保存失败');
+                    }
+                },
+                selectMp(mpId) {
+                    this.selectedMp = mpId;
+                    this.loadArticles();
+                },
+                async getQrCode() {
+                    try {
+                        this.qrStatus = '正在获取二维码...';
+                        this.qrCodeUrl = '';
+
+                        const token = localStorage.getItem('token');
+                        const response = await fetch(`${this.apiBaseUrl}/wechat-monitor/qr-code`, {
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+                        const data = await response.json();
+                        console.log('二维码响应:', data);
+
+                        if (data.code === 0 && data.data && data.data.code) {
+                            // we-mp-rss返回的二维码路径格式: static/wx_qrcode.png?t=...
+                            // 直接使用we-mp-rss的静态文件路径
+                            const qrPath = data.data.code;
+                            // 构建完整的二维码URL: http://localhost:8001/static/wx_qrcode.png?t=...
+                            this.qrCodeUrl = `http://localhost:8001/${qrPath}&_=${Date.now()}`;
+                            this.qrStatus = '请使用微信扫描二维码';
+                            console.log('二维码URL:', this.qrCodeUrl);
+                            console.log('二维码路径:', qrPath);
+
+                            // 开始轮询检查扫码状态
+                            this.startQrStatusCheck();
+                        } else {
+                            this.qrStatus = '获取二维码失败: ' + (data.message || data.data?.msg || '未知错误');
+                            alert('获取二维码失败: ' + (data.message || data.data?.msg || '未知错误'));
+                        }
+                    } catch (error) {
+                        console.error('获取二维码失败:', error);
+                        this.qrStatus = '获取二维码失败: ' + error.message;
+                        alert('获取二维码失败: ' + error.message);
+                    }
+                },
+                startQrStatusCheck() {
+                    // 清除之前的定时器
+                    if (this.qrCheckInterval) {
+                        clearInterval(this.qrCheckInterval);
+                    }
+
+                    // 每2秒检查一次扫码状态
+                    this.qrCheckInterval = setInterval(async () => {
+                        try {
+                            const response = await fetch(`${this.apiBaseUrl}/wechat-monitor/qr-status`, {
+                                headers: this.getAuthHeaders()
+                            });
+                            const data = await response.json();
+
+                            if (data.code === 0 && data.data) {
+                                const status = data.data.status;
+
+                                if (status === 'scanned') {
+                                    this.qrStatus = '已扫描,请在手机上确认';
+                                } else if (status === 'confirmed') {
+                                    this.qrStatus = '登录成功!';
+                                    clearInterval(this.qrCheckInterval);
+                                    alert('登录成功!');
+                                    this.loadSubscriptions();
+                                } else if (status === 'expired') {
+                                    this.qrStatus = '二维码已过期,请重新获取';
+                                    clearInterval(this.qrCheckInterval);
+                                }
+                            }
+                        } catch (error) {
+                            console.error('检查扫码状态失败:', error);
+                        }
+                    }, 2000);
+                },
+                async searchMp() {
+                    if (!this.searchKeyword) {
+                        alert('请输入公众号名称');
+                        return;
+                    }
+
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch(`${this.apiBaseUrl}/wechat-monitor/search?keyword=${encodeURIComponent(this.searchKeyword)}`, {
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+                        const data = await response.json();
+
+                        if (data.code === 0 && data.data) {
+                            this.searchResults = data.data.list || [];
+                            if (this.searchResults.length === 0) {
+                                alert('未找到相关公众号');
+                            }
+                        } else {
+                            alert(data.message || '搜索失败');
+                        }
+                    } catch (error) {
+                        console.error('搜索公众号失败:', error);
+                        alert('搜索失败: ' + error.message);
+                    }
+                },
+                selectSearchResult(mp) {
+                    this.selectedMpData = mp;
+                },
+                async addSubscription() {
+                    if (!this.selectedMpData) {
+                        alert('请先搜索并选择公众号');
+                        return;
+                    }
+
+                    try {
+                        const token = localStorage.getItem('token');
+
+                        console.log('选中的公众号数据:', this.selectedMpData);
+
+                        // 1. 添加订阅到we-mp-rss
+                        const subscriptionData = {
+                            mp_name: this.selectedMpData.nickname || this.selectedMpData.mp_name,
+                            mp_id: this.selectedMpData.fakeid || this.selectedMpData.mp_id || this.selectedMpData.id,
+                            mp_cover: this.selectedMpData.round_head_img || this.selectedMpData.mp_cover || this.selectedMpData.avatar,
+                            avatar: this.selectedMpData.round_head_img || this.selectedMpData.mp_cover || this.selectedMpData.avatar,
+                            mp_intro: this.selectedMpData.signature || this.selectedMpData.mp_intro || ''
+                        };
+
+                        console.log('发送的订阅数据:', subscriptionData);
+
+                        const response = await fetch(`${this.apiBaseUrl}/wechat-monitor/subscriptions`, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(subscriptionData)
+                        });
+                        const data = await response.json();
+
+                        console.log('添加订阅响应:', data);
+
+                        if (data.code === 0) {
+                            alert('添加订阅成功!正在导入历史文章,请稍候...');
+
+                            // 2. 导入该公众号的历史文章
+                            const mpId = this.selectedMpData.fakeid || this.selectedMpData.mp_id || this.selectedMpData.id;
+                            const importResponse = await fetch(`${this.apiBaseUrl}/wechat-monitor/import-history`, {
+                                method: 'POST',
+                                headers: {
+                                    'Authorization': `Bearer ${token}`,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    mpId: mpId,
+                                    limit: 50  // 导入最近50篇文章
+                                })
+                            });
+                            const importData = await importResponse.json();
+
+                            console.log('导入文章响应:', importData);
+
+                            if (importData.success) {
+                                const imported = importData.totalImported || importData.data?.totalImported || importData.data?.imported || 0;
+                                alert(`添加订阅成功!已导入 ${imported} 篇文章`);
+                            } else {
+                                alert('添加订阅成功,但导入文章失败: ' + (importData.message || '未知错误'));
+                            }
+
+                            // 清空搜索结果和选择
+                            this.searchKeyword = '';
+                            this.searchResults = [];
+                            this.selectedMpData = null;
+                            this.loadSubscriptions();
+                            this.loadArticles();
+                        } else {
+                            alert(data.message || '添加订阅失败');
+                        }
+                    } catch (error) {
+                        console.error('添加订阅失败:', error);
+                        alert('添加订阅失败: ' + error.message);
+                    }
+                },
+                async viewArticle(article) {
+                    // 如果文章已经有完整正文,直接显示
+                    if (article.content && article.content.length > 100) {
+                        this.currentArticle = article;
+                        this.showArticleModal = true;
+                        return;
+                    }
+
+                    // 否则从后端获取完整正文
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch(`${this.apiBaseUrl}/articles/${article.id}`, {
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+                        const data = await response.json();
+
+                        if (data.success && data.data) {
+                            this.currentArticle = data.data;
+                            this.showArticleModal = true;
+                        } else {
+                            alert('获取文章详情失败');
+                        }
+                    } catch (error) {
+                        console.error('获取文章详情失败:', error);
+                        alert('获取文章详情失败: ' + error.message);
+                    }
+                },
+                async deleteSubscription(mpId) {
+                    if (!confirm('确定要删除这个订阅吗?')) {
+                        return;
+                    }
+
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch(`${this.apiBaseUrl}/wechat-monitor/subscriptions/${mpId}`, {
+                            method: 'DELETE',
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+                        const data = await response.json();
+
+                        if (data.code === 0) {
+                            alert('删除订阅成功!');
+                            this.loadSubscriptions();
+                            if (this.selectedMp === mpId) {
+                                this.selectedMp = null;
+                                this.loadArticles();
+                            }
+                        } else {
+                            alert(data.message || '删除订阅失败');
+                        }
+                    } catch (error) {
+                        console.error('删除订阅失败:', error);
+                        alert('删除订阅失败: ' + error.message);
+                    }
+                },
+                async updateSubscription(mpId) {
+                    if (!confirm('确定要同步最新文章吗?')) {
+                        return;
+                    }
+
+                    try {
+                        const token = localStorage.getItem('token');
+
+                        console.log('🚀 开始同步文章...');
+
+                        // 1. 触发we-mp-rss爬取
+                        const updateResponse = await fetch(`${this.apiBaseUrl}/wechat-monitor/subscriptions/${mpId}/update?pages=10`, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+                        const updateData = await updateResponse.json();
+
+                        if (updateData.code === 0) {
+                            console.log('✅ we-mp-rss爬取完成,等待5秒后导入...');
+
+                            // 2. 等待5秒让we-mp-rss完成爬取
+                            await new Promise(resolve => setTimeout(resolve, 5000));
+
+                            // 3. 导入文章到数据库
+                            const importResponse = await fetch(`${this.apiBaseUrl}/wechat-monitor/import-history`, {
+                                method: 'POST',
+                                headers: {
+                                    'Authorization': `Bearer ${token}`,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    mpId: mpId,
+                                    limit: 200  // 导入最近200篇文章
+                                })
+                            });
+                            const importData = await importResponse.json();
+
+                            if (importData.success) {
+                                const imported = importData.totalImported || importData.data?.totalImported || 0;
+                                console.log(`✅ 同步完成,共导入 ${imported} 篇新文章`);
+
+                                // 重新加载订阅列表和文章列表
+                                await this.loadSubscriptions();
+                                await this.loadArticles();
+
+                                // 不弹窗,静默刷新
+                            } else {
+                                console.error('导入失败:', importData.message);
+                                alert('同步失败: ' + (importData.message || '未知错误'));
+                            }
+                        } else {
+                            alert('同步失败: ' + (updateData.message || '未知错误'));
+                        }
+                    } catch (error) {
+                        console.error('同步失败:', error);
+                        alert('同步失败: ' + error.message);
+                    }
+                },
+                formatDate(timestamp) {
+                    if (!timestamp) return '';
+                    const date = new Date(timestamp);
+                    return date.toLocaleString('zh-CN');
+                },
+                getProxyImageUrl(imageUrl) {
+                    if (!imageUrl) return 'https://via.placeholder.com/40';
+                    // 如果是微信图片,使用代理
+                    if (imageUrl.includes('mmbiz.qpic.cn')) {
+                        return `${this.apiBaseUrl}/wechat-monitor/image-proxy?url=${encodeURIComponent(imageUrl)}`;
+                    }
+                    return imageUrl;
+                },
+                processArticleContent(content) {
+                    if (!content) return '';
+
+                    // 替换HTML中的所有图片URL为代理URL
+                    return content.replace(/<img[^>]+src="([^"]+)"/g, (match, url) => {
+                        // 如果是微信图片,使用代理
+                        if (url.includes('mmbiz.qpic.cn')) {
+                            const proxyUrl = `${this.apiBaseUrl}/wechat-monitor/image-proxy?url=${encodeURIComponent(url)}`;
+                            return match.replace(url, proxyUrl);
+                        }
+                        return match;
+                    });
+                },
+                refreshData() {
+                    this.loadSubscriptions();
+                    this.loadArticles();
+                },
+                goBack() {
+                    window.location.href = 'index.html';
+                },
+                // 提取HTML内容中的图片URL
+                extractImages(htmlContent) {
+                    if (!htmlContent) return [];
+
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(htmlContent, 'text/html');
+                    const imgs = doc.querySelectorAll('img');
+
+                    // 提取所有图片URL并使用代理
+                    const imageUrls = Array.from(imgs).map(img => {
+                        const src = img.src || img.getAttribute('src');
+                        if (src && src.includes('mmbiz.qpic.cn')) {
+                            return `${this.apiBaseUrl}/wechat-monitor/image-proxy?url=${encodeURIComponent(src)}`;
+                        }
+                        return src;
+                    }).filter(url => url);
+
+                    return imageUrls;
+                },
+                // 去除HTML标签,只保留纯文本
+                stripHtml(html) {
+                    if (!html) return '';
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    let text = doc.body.textContent || '';
+
+                    // 清理多余的空白字符
+                    text = text
+                        .replace(/\n\s*\n\s*\n/g, '\n\n')  // 将多个连续空行替换为两个换行
+                        .replace(/[ \t]+/g, ' ')  // 将多个空格/制表符替换为单个空格
+                        .trim();  // 去除首尾空白
+
+                    return text;
+                },
+                // 跳转到转写页面
+                async goToRewrite(article) {
+                    try {
+                        let fullArticle = article;
+
+                        // 如果文章没有完整正文,从后端获取
+                        if (!article.content || article.content.length < 100) {
+                            const token = localStorage.getItem('token');
+                            const response = await fetch(`${this.apiBaseUrl}/articles/${article.id}`, {
+                                headers: {
+                                    'Authorization': `Bearer ${token}`
+                                }
+                            });
+                            const data = await response.json();
+
+                            if (data.success && data.data) {
+                                fullArticle = data.data;
+                            } else {
+                                alert('获取文章详情失败');
+                                return;
+                            }
+                        }
+
+                        // 准备转写数据
+                        const rewriteData = {
+                            articleId: fullArticle.id,
+                            title: fullArticle.title,
+                            content: this.stripHtml(fullArticle.content),  // 纯文本内容
+                            images: this.extractImages(fullArticle.content),  // 提取图片URL
+                            accountName: fullArticle.mp_name || fullArticle.account_name,
+                            publishTime: fullArticle.publish_time
+                        };
+
+                        // 保存到localStorage
+                        localStorage.setItem('rewriteData', JSON.stringify(rewriteData));
+
+                        // 通知父页面跳转到转写页面
+                        window.parent.postMessage({
+                            action: 'goToRewrite',
+                            data: rewriteData
+                        }, '*');
+                    } catch (error) {
+                        console.error('转写失败:', error);
+                        alert('转写失败: ' + error.message);
+                    }
+                },
+                // 删除文章
+                async deleteArticle(article) {
+                    if (!confirm(`确定要删除文章"${article.title}"吗?`)) {
+                        return;
+                    }
+
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch(`${this.apiBaseUrl}/articles/${article.id}`, {
+                            method: 'DELETE',
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            console.log('✅ 文章删除成功');
+                            // 重新加载文章列表
+                            await this.loadArticles();
+                        } else {
+                            alert('删除失败: ' + (data.message || '未知错误'));
+                        }
+                    } catch (error) {
+                        console.error('删除文章失败:', error);
+                        alert('删除失败: ' + error.message);
+                    }
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
+

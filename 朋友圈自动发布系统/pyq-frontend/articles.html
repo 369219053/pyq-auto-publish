@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文章管理 - 朋友圈自动发布系统</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        #app {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* 顶部导航栏 */
+        .top-nav {
+            background: #FFFFFF;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            padding: 0 30px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .nav-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 18px;
+        }
+
+        .system-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .nav-right {
+            display: flex;
+            gap: 15px;
+        }
+
+        .nav-btn {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .btn-back {
+            background: #E6F4FF;
+            color: #0052CC;
+        }
+
+        .btn-back:hover {
+            background: #BAE0FF;
+        }
+
+        .btn-logout {
+            background: #FFF1F0;
+            color: #CF1322;
+        }
+
+        .btn-logout:hover {
+            background: #FFCCC7;
+        }
+
+        /* 主内容区 */
+        .main-content {
+            flex: 1;
+            padding: 30px;
+        }
+
+        .content-card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        /* 页面标题 */
+        .page-header {
+            margin-bottom: 30px;
+        }
+
+        .page-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .page-subtitle {
+            font-size: 14px;
+            color: #666;
+        }
+
+        /* 统计卡片 */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px;
+            padding: 20px;
+            color: white;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            opacity: 0.9;
+            margin-bottom: 10px;
+        }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: bold;
+        }
+
+        /* 筛选栏 */
+        .filter-bar {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+
+        .filter-select {
+            padding: 8px 15px;
+            border: 1px solid #d9d9d9;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .filter-select:focus {
+            border-color: #0052CC;
+        }
+
+        .btn-import {
+            padding: 8px 20px;
+            background: #52C41A;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .btn-import:hover:not(:disabled) {
+            background: #389E0D;
+        }
+
+        .btn-import:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-refresh {
+            padding: 8px 20px;
+            background: #0052CC;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .btn-refresh:hover {
+            background: #0747A6;
+        }
+
+        /* 文章表格 */
+        .articles-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        .articles-table th,
+        .articles-table td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .articles-table th {
+            background: #fafafa;
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+        }
+
+        .articles-table td {
+            font-size: 14px;
+            color: #666;
+        }
+
+        .articles-table tr:hover {
+            background: #fafafa;
+        }
+
+        .article-title {
+            color: #0052CC;
+            cursor: pointer;
+            text-decoration: none;
+            max-width: 300px;
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .article-title:hover {
+            text-decoration: underline;
+        }
+
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .status-pending { background: #FFF7E6; color: #FA8C16; }
+        .status-rewriting { background: #E6F7FF; color: #1890FF; }
+        .status-rewritten { background: #F6FFED; color: #52C41A; }
+        .status-publishing { background: #E6F7FF; color: #1890FF; }
+        .status-published { background: #F6FFED; color: #52C41A; }
+        .status-failed { background: #FFF1F0; color: #F5222D; }
+
+        .btn-delete {
+            padding: 4px 12px;
+            background: #FFF1F0;
+            color: #CF1322;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .btn-delete:hover {
+            background: #FFCCC7;
+        }
+
+        /* 分页 */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .pagination button {
+            padding: 6px 12px;
+            border: 1px solid #d9d9d9;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .pagination button:hover:not(:disabled) {
+            border-color: #0052CC;
+            color: #0052CC;
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .pagination .page-info {
+            font-size: 14px;
+            color: #666;
+        }
+
+        /* 加载状态 */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        /* 空状态 */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- 顶部导航栏 -->
+        <div class="top-nav">
+            <div class="nav-left">
+                <div class="logo">朋</div>
+                <div class="system-title">朋友圈自动发布系统</div>
+            </div>
+            <div class="nav-right">
+                <button class="nav-btn btn-back" @click="goBack">返回主页</button>
+                <button class="nav-btn btn-logout" @click="logout">退出登录</button>
+            </div>
+        </div>
+
+        <!-- 主内容区 -->
+        <div class="main-content">
+            <div class="content-card">
+                <!-- 页面标题 -->
+                <div class="page-header">
+                    <h1 class="page-title">文章管理</h1>
+                    <p class="page-subtitle">查看和管理对标公众号的文章内容</p>
+                </div>
+
+                <!-- 统计卡片 -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">总文章数</div>
+                        <div class="stat-value">{{ statistics.total }}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">待处理</div>
+                        <div class="stat-value">{{ statistics.pending }}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">已发布</div>
+                        <div class="stat-value">{{ statistics.published }}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">今日新增</div>
+                        <div class="stat-value">{{ statistics.today }}</div>
+                    </div>
+                </div>
+
+                <!-- 筛选栏 -->
+                <div class="filter-bar">
+                    <select class="filter-select" v-model="filters.accountId" @change="loadArticles">
+                        <option value="">全部公众号</option>
+                        <option v-for="account in accounts" :key="account.account_id" :value="account.account_id">
+                            {{ account.account_name }}
+                        </option>
+                    </select>
+                    <select class="filter-select" v-model="filters.status" @change="loadArticles">
+                        <option value="">全部状态</option>
+                        <option value="待处理">待处理</option>
+                        <option value="改写中">改写中</option>
+                        <option value="已改写">已改写</option>
+                        <option value="发布中">发布中</option>
+                        <option value="已发布">已发布</option>
+                        <option value="失败">失败</option>
+                    </select>
+                    <button class="btn-import" @click="importHistory" :disabled="importing">
+                        {{ importing ? '导入中...' : '导入历史文章' }}
+                    </button>
+                    <button class="btn-refresh" @click="refresh">刷新</button>
+                </div>
+
+                <!-- 加载状态 -->
+                <div v-if="loading" class="loading">
+                    加载中...
+                </div>
+
+                <!-- 文章表格 -->
+                <div v-else-if="articles.length > 0">
+                    <table class="articles-table">
+                        <thead>
+                            <tr>
+                                <th>文章标题</th>
+                                <th>公众号</th>
+                                <th>发布时间</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="article in articles" :key="article.id">
+                                <td>
+                                    <a :href="article.url" target="_blank" class="article-title" :title="article.title">
+                                        {{ article.title }}
+                                    </a>
+                                </td>
+                                <td>{{ article.account_name }}</td>
+                                <td>{{ formatDate(article.publish_time) }}</td>
+                                <td>
+                                    <span class="status-badge" :class="getStatusClass(article.status)">
+                                        {{ article.status }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <button class="btn-delete" @click="deleteArticle(article.id)">删除</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+
+                    <!-- 分页 -->
+                    <div class="pagination">
+                        <button @click="prevPage" :disabled="currentPage === 1">上一页</button>
+                        <span class="page-info">第 {{ currentPage }} / {{ totalPages }} 页</span>
+                        <button @click="nextPage" :disabled="currentPage === totalPages">下一页</button>
+                    </div>
+                </div>
+
+                <!-- 空状态 -->
+                <div v-else class="empty-state">
+                    <div class="empty-state-icon">📭</div>
+                    <div>暂无文章数据</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    loading: false,
+                    importing: false,
+                    articles: [],
+                    accounts: [],
+                    statistics: {
+                        total: 0,
+                        pending: 0,
+                        published: 0,
+                        today: 0,
+                    },
+                    filters: {
+                        accountId: '',
+                        status: '',
+                    },
+                    currentPage: 1,
+                    pageSize: 20,
+                    totalPages: 1,
+                };
+            },
+            mounted() {
+                this.checkAuth();
+                this.loadData();
+            },
+            methods: {
+                checkAuth() {
+                    const token = localStorage.getItem('token');
+                    const user = localStorage.getItem('user');
+                    
+                    if (!token || !user) {
+                        alert('请先登录');
+                        window.location.href = 'login.html';
+                    }
+                },
+                async loadData() {
+                    await Promise.all([
+                        this.loadArticles(),
+                        this.loadAccounts(),
+                        this.loadStatistics(),
+                    ]);
+                },
+                async loadArticles() {
+                    this.loading = true;
+                    try {
+                        const token = localStorage.getItem('token');
+                        const params = new URLSearchParams({
+                            page: this.currentPage,
+                            pageSize: this.pageSize,
+                        });
+                        
+                        if (this.filters.accountId) {
+                            params.append('accountId', this.filters.accountId);
+                        }
+                        if (this.filters.status) {
+                            params.append('status', this.filters.status);
+                        }
+
+                        const response = await fetch(`https://autochat.lfdhk.com/api/articles?${params}`, {
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                            },
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.articles = data.data;
+                            this.totalPages = data.totalPages;
+                        } else {
+                            alert('获取文章列表失败');
+                        }
+                    } catch (error) {
+                        console.error('获取文章列表失败:', error);
+                        alert('获取文章列表失败');
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                async loadAccounts() {
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch('https://autochat.lfdhk.com/api/articles/accounts/list', {
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                            },
+                        });
+
+                        if (response.ok) {
+                            this.accounts = await response.json();
+                        }
+                    } catch (error) {
+                        console.error('获取公众号列表失败:', error);
+                    }
+                },
+                async loadStatistics() {
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch('https://autochat.lfdhk.com/api/articles/statistics/summary', {
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                            },
+                        });
+
+                        if (response.ok) {
+                            this.statistics = await response.json();
+                        }
+                    } catch (error) {
+                        console.error('获取统计信息失败:', error);
+                    }
+                },
+                async deleteArticle(id) {
+                    if (!confirm('确定要删除这篇文章吗?')) {
+                        return;
+                    }
+
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch(`https://autochat.lfdhk.com/api/articles/${id}`, {
+                            method: 'DELETE',
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                            },
+                        });
+
+                        if (response.ok) {
+                            alert('删除成功');
+                            this.loadData();
+                        } else {
+                            alert('删除失败');
+                        }
+                    } catch (error) {
+                        console.error('删除文章失败:', error);
+                        alert('删除失败');
+                    }
+                },
+                async importHistory() {
+                    if (!confirm('确定要导入we-mp-rss中的所有历史文章吗?\n\n这可能需要一些时间,请耐心等待。')) {
+                        return;
+                    }
+
+                    this.importing = true;
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch('https://autochat.lfdhk.com/api/wechat-monitor/import-history', {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                mpId: this.filters.accountId || undefined,
+                                limit: undefined,
+                            }),
+                        });
+
+                        if (response.ok) {
+                            const result = await response.json();
+                            alert(`导入成功!\n\n${result.message}`);
+                            this.loadData();
+                        } else {
+                            const error = await response.json();
+                            alert(`导入失败: ${error.message || '未知错误'}`);
+                        }
+                    } catch (error) {
+                        console.error('导入历史文章失败:', error);
+                        alert('导入失败,请检查网络连接');
+                    } finally {
+                        this.importing = false;
+                    }
+                },
+                refresh() {
+                    this.currentPage = 1;
+                    this.loadData();
+                },
+                prevPage() {
+                    if (this.currentPage > 1) {
+                        this.currentPage--;
+                        this.loadArticles();
+                    }
+                },
+                nextPage() {
+                    if (this.currentPage < this.totalPages) {
+                        this.currentPage++;
+                        this.loadArticles();
+                    }
+                },
+                formatDate(dateString) {
+                    if (!dateString) return '-';
+                    const date = new Date(dateString);
+                    return date.toLocaleString('zh-CN');
+                },
+                getStatusClass(status) {
+                    const statusMap = {
+                        '待处理': 'status-pending',
+                        '改写中': 'status-rewriting',
+                        '已改写': 'status-rewritten',
+                        '发布中': 'status-publishing',
+                        '已发布': 'status-published',
+                        '失败': 'status-failed',
+                    };
+                    return statusMap[status] || '';
+                },
+                goBack() {
+                    window.location.href = 'index.html';
+                },
+                logout() {
+                    if (confirm('确定要退出登录吗?')) {
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('user');
+                        sessionStorage.setItem('isLogout', 'true');
+                        window.location.href = 'login.html';
+                    }
+                },
+            },
+        }).mount('#app');
+    </script>
+</body>
+</html>
+

@@ -1,0 +1,3651 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>朋友圈自动发布系统 - 管理后台</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f0f2f5;
+        }
+
+        .app-container {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* 侧边栏样式 - 清爽白色风格 */
+        .sidebar {
+            width: 256px;
+            background: white;
+            border-right: 1px solid #e8e8e8;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .logo {
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: bold;
+            color: #0052CC;
+            background: white;
+            border-bottom: 1px solid #e8e8e8;
+        }
+
+        .menu {
+            flex: 1;
+            padding: 16px 0;
+        }
+
+        .menu-item {
+            padding: 12px 24px;
+            margin: 4px 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: #666;
+            border-radius: 8px;
+        }
+
+        .menu-item:hover {
+            background: #E6F4FF;
+            color: #0052CC;
+        }
+
+        .menu-item.active {
+            background: #0052CC;
+            color: white;
+        }
+
+        .menu-icon {
+            font-size: 18px;
+        }
+
+        /* 分级菜单样式 */
+        .menu-group {
+            margin: 4px 0;
+        }
+
+        .menu-group-title {
+            padding: 12px 24px;
+            margin: 4px 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: #666;
+            border-radius: 8px;
+            font-weight: 500;
+        }
+
+        .menu-group-title:hover {
+            background: #E6F4FF;
+            color: #0052CC;
+        }
+
+        .menu-group-title.active {
+            background: #E6F4FF;
+            color: #0052CC;
+        }
+
+        .menu-group-icon {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .menu-arrow {
+            font-size: 12px;
+            transition: transform 0.3s;
+        }
+
+        .menu-arrow.expanded {
+            transform: rotate(90deg);
+        }
+
+        .submenu {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+
+        .submenu.expanded {
+            max-height: 500px;
+        }
+
+        .submenu-item {
+            padding: 10px 24px 10px 56px;
+            margin: 2px 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #666;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .submenu-item:hover {
+            background: #E6F4FF;
+            color: #0052CC;
+        }
+
+        .submenu-item.active {
+            background: #0052CC;
+            color: white;
+        }
+
+        /* 侧边栏底部版本信息 */
+        .sidebar-footer {
+            padding: 16px 24px;
+            border-top: 1px solid #f0f0f0;
+            text-align: center;
+            color: #999;
+            font-size: 12px;
+        }
+
+        /* 主内容区域 */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* 顶部导航栏 */
+        .header {
+            height: 64px;
+            background: white;
+            box-shadow: 0 1px 4px rgba(0,21,41,.08);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+        }
+
+        .header-title {
+            font-size: 18px;
+            font-weight: 500;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #0052CC;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+
+        /* 内容区域 */
+        .content {
+            flex: 1;
+            padding: 24px;
+            overflow-y: auto;
+        }
+
+        .page {
+            display: none;
+        }
+
+        .page.active {
+            display: block;
+        }
+
+        /* 卡片样式 */
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 500;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        /* 统计卡片 - 清爽蓝色风格 */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #E6F4FF 0%, #ffffff 100%);
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,82,204,0.08);
+            border: 1px solid #E6F4FF;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #0052CC;
+        }
+
+        .stat-trend {
+            font-size: 12px;
+            color: #0052CC;
+            margin-top: 8px;
+        }
+
+        /* 表单样式 */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #333;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #d9d9d9;
+            border-radius: 4px;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #0052CC;
+            box-shadow: 0 0 0 2px rgba(0, 82, 204, 0.2);
+        }
+
+        .form-textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+
+        /* 图片编辑器样式 */
+        .image-editor {
+            margin-top: 20px;
+        }
+
+        .image-gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 10px;
+        }
+
+        .image-item {
+            position: relative;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #f9f9f9;
+        }
+
+        .image-item img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+            display: block;
+        }
+
+        .image-controls {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            display: flex;
+            gap: 5px;
+        }
+
+        .image-btn {
+            width: 28px;
+            height: 28px;
+            border: none;
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s;
+        }
+
+        .image-btn:hover {
+            background: rgba(0, 0, 0, 0.8);
+        }
+
+        .image-order {
+            position: absolute;
+            bottom: 5px;
+            left: 5px;
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .add-image-btn {
+            width: 100%;
+            height: 150px;
+            border: 2px dashed #d0d0d0;
+            border-radius: 8px;
+            background: #f9f9f9;
+            color: #999;
+            cursor: pointer;
+            font-size: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s;
+        }
+
+        .add-image-btn:hover {
+            border-color: #0052CC;
+            color: #0052CC;
+            background: #f0f7ff;
+        }
+
+        /* 按钮样式 - 深蓝色主题 */
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 500;
+        }
+
+        .btn-primary {
+            background: #0052CC;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #0065FF;
+            box-shadow: 0 4px 12px rgba(0,82,204,0.3);
+        }
+
+        .btn-success {
+            background: #0052CC;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #0065FF;
+            box-shadow: 0 4px 12px rgba(0,82,204,0.3);
+        }
+
+        .btn-danger {
+            background: #ff4d4f;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #ff7875;
+        }
+
+        /* 表格样式 */
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .table th,
+        .table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .table th {
+            background: #fafafa;
+            font-weight: 500;
+            color: #333;
+        }
+
+        .table tr:hover {
+            background: #fafafa;
+        }
+
+        /* 标签样式 */
+        .tag {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .tag-success {
+            background: #f6ffed;
+            color: #52c41a;
+            border: 1px solid #b7eb8f;
+        }
+
+        .tag-warning {
+            background: #fffbe6;
+            color: #faad14;
+            border: 1px solid #ffe58f;
+        }
+
+        .tag-danger {
+            background: #fff2f0;
+            color: #ff4d4f;
+            border: 1px solid #ffccc7;
+        }
+
+        .tag-info {
+            background: #E6F4FF;
+            color: #0052CC;
+            border: 1px solid #91d5ff;
+        }
+
+        /* 图片预览 */
+        .image-preview {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+        }
+
+        .image-item {
+            width: 100px;
+            height: 100px;
+            border-radius: 4px;
+            object-fit: cover;
+            border: 1px solid #d9d9d9;
+        }
+
+        /* 空状态 */
+        .empty-state {
+            text-align: center;
+            padding: 60px 0;
+            color: #999;
+        }
+
+        .empty-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+        }
+
+        /* iframe容器样式 - 无缝集成 */
+        .iframe-container {
+            width: 100%;
+            height: calc(100vh - 64px);  /* 减去顶部导航栏高度 */
+            border: none;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .iframe-container iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            display: block;
+            background: #f0f2f5;
+        }
+
+        /* 模态框样式 */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            max-width: 90%;
+            max-height: 90vh;
+            overflow: auto;
+        }
+
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid #e8e8e8;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #999;
+            padding: 0;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            transition: all 0.3s;
+        }
+
+        .modal-close:hover {
+            background: #f5f5f5;
+            color: #333;
+        }
+
+        .modal-body {
+            padding: 24px;
+        }
+
+        .modal-footer {
+            padding: 16px 24px;
+            border-top: 1px solid #e8e8e8;
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+
+        /* 加载动画 */
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #0052CC;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* ========================================
+           响应式设计 - 移动端适配
+           ======================================== */
+
+        /* 汉堡菜单按钮 (默认隐藏) */
+        .mobile-menu-btn {
+            display: none;
+            position: fixed;
+            top: 16px;
+            left: 16px;
+            z-index: 1001;
+            width: 44px;
+            height: 44px;
+            background: white;
+            border: 1px solid #e8e8e8;
+            border-radius: 8px;
+            cursor: pointer;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .mobile-menu-btn span {
+            width: 20px;
+            height: 2px;
+            background: #0052CC;
+            transition: all 0.3s;
+        }
+
+        .mobile-menu-btn.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+
+        .mobile-menu-btn.active span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .mobile-menu-btn.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(5px, -5px);
+        }
+
+        /* 遮罩层 (默认隐藏) */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 999;
+        }
+
+        /* 平板设备 (768px - 1024px) */
+        @media (max-width: 1024px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .content {
+                padding: 16px;
+            }
+
+            .card {
+                padding: 16px;
+            }
+        }
+
+        /* 移动设备 (< 768px) */
+        @media (max-width: 768px) {
+            /* 显示汉堡菜单按钮 */
+            .mobile-menu-btn {
+                display: flex;
+            }
+
+            /* 侧边栏默认隐藏,变成抽屉式 */
+            .sidebar {
+                position: fixed;
+                top: 0;
+                left: -256px;
+                height: 100vh;
+                z-index: 1000;
+                transition: left 0.3s ease;
+                box-shadow: 2px 0 8px rgba(0,0,0,0.15);
+            }
+
+            .sidebar.active {
+                left: 0;
+            }
+
+            /* 显示遮罩层 */
+            .sidebar-overlay.active {
+                display: block;
+            }
+
+            /* 内容区域占满全屏 */
+            .content {
+                width: 100%;
+                padding: 72px 12px 12px 12px; /* 顶部留空给汉堡菜单 */
+            }
+
+            /* 统计卡片单列显示 */
+            .stats-grid {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+
+            .stat-card {
+                padding: 16px;
+            }
+
+            .stat-value {
+                font-size: 24px;
+            }
+
+            /* 卡片样式优化 */
+            .card {
+                padding: 12px;
+                margin-bottom: 12px;
+                border-radius: 6px;
+            }
+
+            .card-title {
+                font-size: 14px;
+                margin-bottom: 12px;
+                padding-bottom: 8px;
+            }
+
+            /* 表单优化 */
+            .form-group {
+                margin-bottom: 16px;
+            }
+
+            .form-input {
+                padding: 12px;
+                font-size: 16px; /* 防止iOS自动缩放 */
+            }
+
+            /* 按钮优化 */
+            .btn {
+                padding: 12px 20px;
+                font-size: 14px;
+                min-height: 44px; /* 触摸友好 */
+            }
+
+            /* 表格优化 */
+            .table-container {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            table {
+                min-width: 600px;
+            }
+
+            /* 菜单项优化 */
+            .menu-item {
+                padding: 14px 20px;
+                margin: 6px 12px;
+                font-size: 15px;
+            }
+
+            .menu-icon {
+                font-size: 20px;
+            }
+
+            /* Logo优化 */
+            .logo {
+                height: 56px;
+                font-size: 18px;
+            }
+
+            /* 用户信息优化 */
+            .user-info {
+                padding: 12px 20px;
+            }
+        }
+
+        /* 小屏手机 (< 375px) */
+        @media (max-width: 375px) {
+            .content {
+                padding: 68px 8px 8px 8px;
+            }
+
+            .stat-value {
+                font-size: 20px;
+            }
+
+            .card {
+                padding: 10px;
+            }
+
+            .btn {
+                padding: 10px 16px;
+                font-size: 13px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app" class="app-container">
+        <!-- 汉堡菜单按钮 (移动端) -->
+        <button class="mobile-menu-btn" @click="toggleMobileMenu" :class="{active: mobileMenuOpen}">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+
+        <!-- 遮罩层 (移动端) -->
+        <div class="sidebar-overlay" :class="{active: mobileMenuOpen}" @click="closeMobileMenu"></div>
+
+        <!-- 侧边栏 -->
+        <div class="sidebar" :class="{active: mobileMenuOpen}">
+            <div class="logo">
+                🚀 朋友圈发布系统
+            </div>
+            <div class="menu">
+                <!-- 自动模式 -->
+                <div class="menu-item" :class="{active: currentPage === 'auto-workflow'}" @click="currentPage = 'auto-workflow'; closeMobileMenu()">
+                    <span>自动模式</span>
+                </div>
+
+                <!-- 手动模式 -->
+                <div class="menu-group">
+                    <div class="menu-group-title" :class="{active: menuGroups.manual}" @click="toggleMenuGroup('manual')">
+                        <div class="menu-group-icon">
+                            <span>手动模式</span>
+                        </div>
+                        <span class="menu-arrow" :class="{expanded: menuGroups.manual}">▶</span>
+                    </div>
+                    <div class="submenu" :class="{expanded: menuGroups.manual}">
+                        <div class="submenu-item" :class="{active: currentPage === 'collection'}" @click="currentPage = 'collection'; closeMobileMenu()">
+                            <span>公众号提取</span>
+                        </div>
+                        <div class="submenu-item" :class="{active: currentPage === 'rewrite'}" @click="currentPage = 'rewrite'; closeMobileMenu()">
+                            <span>文案转写</span>
+                        </div>
+                        <div class="submenu-item" :class="{active: currentPage === 'publish'}" @click="currentPage = 'publish'; closeMobileMenu()">
+                            <span>自动发布</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 公众号监控 -->
+                <div class="menu-item" :class="{active: currentPage === 'wechat-monitor'}" @click="currentPage = 'wechat-monitor'; closeMobileMenu()">
+                    <span>公众号监控</span>
+                </div>
+
+                <!-- 仪表盘 -->
+                <div class="menu-item" :class="{active: currentPage === 'dashboard'}" @click="currentPage = 'dashboard'; closeMobileMenu()">
+                    <span>仪表盘</span>
+                </div>
+
+                <!-- 堆雪球账号设置 -->
+                <div class="menu-item" :class="{active: currentPage === 'accounts'}" @click="currentPage = 'accounts'; closeMobileMenu()">
+                    <span>堆雪球账号设置</span>
+                </div>
+
+                <!-- 堆雪球网页 -->
+                <div class="menu-item" @click="openDuixueqiuInNewTab(); closeMobileMenu()">
+                    <span>🌐 堆雪球网页</span>
+                </div>
+
+                <!-- API配置 -->
+                <div class="menu-group">
+                    <div class="menu-group-title" :class="{active: menuGroups.api}" @click="toggleMenuGroup('api')">
+                        <div class="menu-group-icon">
+                            <span>API配置</span>
+                        </div>
+                        <span class="menu-arrow" :class="{expanded: menuGroups.api}">▶</span>
+                    </div>
+                    <div class="submenu" :class="{expanded: menuGroups.api}">
+                        <div class="submenu-item" :class="{active: currentPage === 'coze-config'}" @click="currentPage = 'coze-config'">
+                            <span>Coze配置</span>
+                        </div>
+                        <div class="submenu-item" :class="{active: currentPage === 'feishu-config'}" @click="currentPage = 'feishu-config'">
+                            <span>飞书多维表格</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 侧边栏底部版本信息 -->
+            <div class="sidebar-footer">
+                V3.6.0 - 跟圈自动化
+            </div>
+        </div>
+
+        <!-- 主内容区域 -->
+        <div class="main-content">
+            <!-- 顶部导航栏 -->
+            <div class="header">
+                <div class="header-title">{{ pageTitle }}</div>
+                <div class="user-info">
+                    <span>{{ userName }}</span>
+                    <div class="avatar">{{ userAvatar }}</div>
+                    <button class="btn btn-logout" @click="handleLogout" style="margin-left: 12px; padding: 6px 12px; background: #ff4d4f; color: white; border: none; border-radius: 4px; cursor: pointer;">退出登录</button>
+                </div>
+            </div>
+
+            <!-- 内容区域 -->
+            <div class="content">
+                <!-- 仪表盘页面 -->
+                <div class="page" :class="{active: currentPage === 'dashboard'}">
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">今日采集</div>
+                            <div class="stat-value">23</div>
+                            <div class="stat-trend">↑ 12% 较昨日</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">今日改写</div>
+                            <div class="stat-value">18</div>
+                            <div class="stat-trend">↑ 8% 较昨日</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">今日发布</div>
+                            <div class="stat-value">15</div>
+                            <div class="stat-trend">↑ 15% 较昨日</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">活跃账号</div>
+                            <div class="stat-value">8</div>
+                            <div class="stat-trend">共10个账号</div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">最近发布记录</div>
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>文案内容</th>
+                                    <th>发布账号</th>
+                                    <th>发布时间</th>
+                                    <th>状态</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>今天天气真好，适合发朋友圈！</td>
+                                    <td>微信号1</td>
+                                    <td>2025-10-22 14:30</td>
+                                    <td><span class="tag tag-success">已发布</span></td>
+                                </tr>
+                                <tr>
+                                    <td>分享一篇好文章给大家</td>
+                                    <td>微信号2</td>
+                                    <td>2025-10-22 13:15</td>
+                                    <td><span class="tag tag-success">已发布</span></td>
+                                </tr>
+                                <tr>
+                                    <td>周末愉快！</td>
+                                    <td>微信号3</td>
+                                    <td>2025-10-22 10:00</td>
+                                    <td><span class="tag tag-warning">待发布</span></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 自动模式页面 -->
+                <div class="page" :class="{active: currentPage === 'auto-workflow'}">
+                    <!-- 脚本选择卡片 -->
+                    <div class="card">
+                        <div class="card-title">🤖 选择自动化脚本</div>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px;">
+                            <!-- 脚本1 -->
+                            <div @click="autoForm.selectedScript = 'script1'"
+                                 :style="{
+                                     padding: '20px',
+                                     border: autoForm.selectedScript === 'script1' ? '2px solid #0052CC' : '1px solid #ddd',
+                                     borderRadius: '8px',
+                                     cursor: 'pointer',
+                                     background: autoForm.selectedScript === 'script1' ? '#E6F4FF' : 'white',
+                                     transition: 'all 0.3s'
+                                 }">
+                                <div style="font-size: 18px; font-weight: bold; margin-bottom: 8px; color: #0052CC;">
+                                    📝 脚本1: 输入链接自动发布
+                                </div>
+                                <div style="color: #666; font-size: 14px; line-height: 1.6;">
+                                    输入公众号文章链接,自动完成采集、转写、发布全流程
+                                </div>
+                            </div>
+
+                            <!-- 脚本3 -->
+                            <div @click="autoForm.selectedScript = 'script3'"
+                                 :style="{
+                                     padding: '20px',
+                                     border: autoForm.selectedScript === 'script3' ? '2px solid #0052CC' : '1px solid #ddd',
+                                     borderRadius: '8px',
+                                     cursor: 'pointer',
+                                     background: autoForm.selectedScript === 'script3' ? '#E6F4FF' : 'white',
+                                     transition: 'all 0.3s'
+                                 }">
+                                <div style="font-size: 18px; font-weight: bold; margin-bottom: 8px; color: #0052CC;">
+                                    ⏰ 脚本3: 定时监控自动发布
+                                </div>
+                                <div style="color: #666; font-size: 14px; line-height: 1.6;">
+                                    定时检查订阅的公众号新文章,自动转写并发布
+                                </div>
+                            </div>
+
+                            <!-- 脚本4 -->
+                            <div @click="autoForm.selectedScript = 'script4'"
+                                 :style="{
+                                     padding: '20px',
+                                     border: autoForm.selectedScript === 'script4' ? '2px solid #0052CC' : '1px solid #ddd',
+                                     borderRadius: '8px',
+                                     cursor: 'pointer',
+                                     background: autoForm.selectedScript === 'script4' ? '#E6F4FF' : 'white',
+                                     transition: 'all 0.3s'
+                                 }">
+                                <div style="font-size: 18px; font-weight: bold; margin-bottom: 8px; color: #0052CC;">
+                                    🔄 脚本4: 跟圈自动化
+                                </div>
+                                <div style="color: #666; font-size: 14px; line-height: 1.6;">
+                                    自动发布多条相同内容的朋友圈,并定时删除旧朋友圈
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 脚本1配置 -->
+                    <div class="card" v-if="autoForm.selectedScript === 'script1'">
+                        <div class="card-title">📝 脚本1: 输入链接自动发布</div>
+
+                        <div class="form-group">
+                            <label class="form-label">* 公众号文章链接</label>
+                            <input type="text" class="form-input" v-model="autoForm.script1.url"
+                                   placeholder="请输入公众号文章链接" :disabled="autoForm.script1Loading"
+                                   autocomplete="off">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">发布时间</label>
+                            <div style="display: flex; gap: 16px; align-items: center;">
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="radio" v-model="autoForm.script1.isImmediate" :value="true" :disabled="autoForm.script1Loading">
+                                    <span>立即发布</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="radio" v-model="autoForm.script1.isImmediate" :value="false" :disabled="autoForm.script1Loading">
+                                    <span>定时发布</span>
+                                </label>
+                            </div>
+                            <input v-if="!autoForm.script1.isImmediate" type="datetime-local" class="form-input"
+                                   v-model="autoForm.script1.publishTime" style="margin-top: 10px;" :disabled="autoForm.script1Loading">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">内容类型</label>
+                            <select class="form-input" v-model="autoForm.script1.contentType" :disabled="autoForm.script1Loading">
+                                <option value="text">文本</option>
+                                <option value="image">图片</option>
+                                <option value="video">视频</option>
+                                <option value="link">链接</option>
+                            </select>
+                        </div>
+
+                        <button class="btn btn-primary" @click="executeScript1">
+                            <span v-if="autoForm.script1RunningTasks.length === 0">🚀 执行脚本</span>
+                            <span v-else>⏳ 执行中 ({{ autoForm.script1RunningTasks.length }}个任务)</span>
+                        </button>
+
+                        <!-- 🆕 正在执行的任务列表 - 每个任务独立显示 -->
+                        <div v-if="autoForm.script1RunningTasks.length > 0" style="margin-top: 16px;">
+                            <div style="font-weight: bold; color: #0052CC; margin-bottom: 12px; font-size: 16px;">
+                                ⏳ 正在执行的任务 ({{ autoForm.script1RunningTasks.length }}个)
+                            </div>
+
+                            <!-- 每个任务独立卡片 -->
+                            <div v-for="(task, index) in autoForm.script1RunningTasks" :key="task.taskId"
+                                 style="margin-bottom: 16px; border: 2px solid #0052CC; border-radius: 8px; overflow: hidden;">
+
+                                <!-- 任务头部 -->
+                                <div style="background: #0052CC; color: white; padding: 12px; display: flex; justify-content: space-between; align-items: center;">
+                                    <div>
+                                        <div style="font-weight: bold; font-size: 15px;">📋 任务{{ index + 1 }}: {{ task.taskId }}</div>
+                                        <div style="font-size: 12px; margin-top: 4px; opacity: 0.9;">
+                                            开始时间: {{ task.startTime }} |
+                                            文章链接: {{ task.url.substring(0, 50) }}... |
+                                            {{ task.isImmediate ? '立即发布' : '定时发布' }}
+                                        </div>
+                                    </div>
+                                    <div style="display: flex; gap: 8px; align-items: center;">
+                                        <span v-if="task.queueStatus === 'queued'" style="background: #6c757d; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                                            ⏳ 排队中 (第{{ task.queuePosition }}位)
+                                        </span>
+                                        <span v-if="task.queueStatus === 'executing' || (task.status === 'running' && !task.queueStatus)" style="background: #ffc107; color: #000; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                                            ▶️ 执行中
+                                        </span>
+                                        <span v-if="task.status === 'completed'" style="background: #28a745; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                                            ✅ 已完成
+                                        </span>
+                                        <span v-if="task.status === 'failed'" style="background: #dc3545; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                                            ❌ 失败
+                                        </span>
+                                        <button v-if="task.status === 'running'" @click="stopSingleScript1Task(task.taskId)"
+                                                style="background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                                            🛑 停止
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- 任务日志 -->
+                                <div :id="'task-logs-' + task.taskId"
+                                     style="background: #f8f9fa; padding: 12px; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 12px; line-height: 1.6;">
+                                    <div v-if="task.logs.length === 0" style="color: #999; text-align: center; padding: 20px;">
+                                        等待日志输出...
+                                    </div>
+                                    <div v-for="(log, logIndex) in task.logs" :key="logIndex" style="margin-bottom: 4px; color: #333;">
+                                        {{ log }}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 16px; padding: 12px; background: #f5f5f5; border-radius: 4px; color: #666; font-size: 14px;">
+                            <div style="font-weight: bold; margin-bottom: 8px;">📋 执行流程:</div>
+                            <div>1️⃣ 自动采集文章内容和图片</div>
+                            <div>2️⃣ 自动调用Coze AI转写3个版本</div>
+                            <div>3️⃣ 自动选择版本1创建发布任务</div>
+                            <div>4️⃣ 自动设置发布时间</div>
+                            <div>5️⃣ 自动执行发布到堆雪球</div>
+                            <div style="margin-top: 8px; color: #0052CC;">💡 可以同时创建多个任务,互不干扰,每个任务可单独停止</div>
+                        </div>
+                    </div>
+
+                    <!-- 脚本3配置 -->
+                    <div class="card" v-if="autoForm.selectedScript === 'script3'">
+                        <div class="card-title">⏰ 脚本3: 定时监控自动发布</div>
+
+                        <div class="form-group">
+                            <label class="form-label">
+                                <input type="checkbox" v-model="autoForm.script3.autoRewrite" :disabled="autoForm.script3Loading">
+                                自动转写文案
+                            </label>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">
+                                <input type="checkbox" v-model="autoForm.script3.autoPublish" :disabled="autoForm.script3Loading">
+                                自动创建发布任务
+                            </label>
+                        </div>
+
+                        <div class="form-group" v-if="autoForm.script3.autoPublish">
+                            <label class="form-label">发布延迟(分钟)</label>
+                            <input type="number" class="form-input" v-model.number="autoForm.script3.publishDelay"
+                                   placeholder="0表示立即发布" min="0" :disabled="autoForm.script3Loading">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">内容类型</label>
+                            <select class="form-input" v-model="autoForm.script3.contentType" :disabled="autoForm.script3Loading">
+                                <option value="text">文本</option>
+                                <option value="image">图片</option>
+                                <option value="video">视频</option>
+                                <option value="link">链接</option>
+                            </select>
+                        </div>
+
+                        <button class="btn btn-primary" @click="executeScript3" :disabled="autoForm.script3Loading">
+                            <span v-if="!autoForm.script3Loading">🚀 执行脚本</span>
+                            <span v-else>⏳ 执行中...</span>
+                        </button>
+
+                        <div style="margin-top: 16px; padding: 12px; background: #f5f5f5; border-radius: 4px; color: #666; font-size: 14px;">
+                            <div style="font-weight: bold; margin-bottom: 8px;">📋 执行流程:</div>
+                            <div>1️⃣ 检查最近1小时内的新文章</div>
+                            <div>2️⃣ 自动转写新文章(如果启用)</div>
+                            <div>3️⃣ 自动创建发布任务(如果启用)</div>
+                            <div>4️⃣ 按设置的延迟时间发布</div>
+                        </div>
+
+                        <!-- 🔥 移除静态执行结果显示,改用实时日志 -->
+                    </div>
+
+                    <!-- 脚本4配置 -->
+                    <div class="card" v-if="autoForm.selectedScript === 'script4'">
+                        <div class="card-title">🔄 脚本4: 跟圈自动化</div>
+
+                        <div class="form-group">
+                            <label class="form-label">* 朋友圈内容</label>
+                            <textarea class="form-input" v-model="autoForm.script4.content"
+                                      placeholder="请输入朋友圈文字内容" rows="5"
+                                      style="resize: vertical;"></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">上传图片 (最多9张)</label>
+                            <input type="file" multiple accept="image/*" @change="handleScript4ImageUpload"
+                                   style="display: none;" ref="script4ImageInput">
+                            <button class="btn" @click="$refs.script4ImageInput.click()"
+                                    style="background: #f0f0f0; color: #333; border: 1px solid #ddd;">
+                                📷 选择图片
+                            </button>
+                            <div v-if="autoForm.script4.images.length > 0" style="margin-top: 12px; display: flex; flex-wrap: wrap; gap: 10px;">
+                                <div v-for="(image, index) in autoForm.script4.images" :key="index"
+                                     style="position: relative; width: 100px; height: 100px; border-radius: 4px; overflow: hidden; border: 1px solid #ddd;">
+                                    <img :src="image" style="width: 100%; height: 100%; object-fit: cover;">
+                                    <button @click="removeScript4Image(index)"
+                                            style="position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,0.6); color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                                        ×
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">* 跟圈次数</label>
+                            <input type="number" class="form-input" v-model.number="autoForm.script4.followCount"
+                                   placeholder="输入跟圈次数 (1-10)" min="1" max="10">
+                            <div style="color: #666; font-size: 12px; margin-top: 4px;">
+                                例如: 输入3表示总共发布4条朋友圈 (第1条立即发布 + 3次跟圈)
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">* 时间间隔 (分钟)</label>
+                            <input type="number" class="form-input" v-model.number="autoForm.script4.intervalMinutes"
+                                   placeholder="输入时间间隔 (分钟)" min="1" max="1440">
+                            <div style="color: #666; font-size: 12px; margin-top: 4px;">
+                                例如: 输入30表示每隔30分钟发布一次
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">随机延迟 (±分钟)</label>
+                            <input type="number" class="form-input" v-model.number="autoForm.script4.randomDelayMinutes"
+                                   placeholder="输入随机延迟范围 (可选)" min="0" max="60">
+                            <div style="color: #666; font-size: 12px; margin-top: 4px;">
+                                例如: 输入5表示在设定时间的±5分钟内随机发布 (留空或0表示不使用随机延迟)
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">延迟启动 (分钟)</label>
+                            <input type="number" class="form-input" v-model.number="autoForm.script4.delayStartMinutes"
+                                   placeholder="输入延迟启动时间 (可选)" min="0" max="1440">
+                            <div style="color: #666; font-size: 12px; margin-top: 4px;">
+                                例如: 输入10表示10分钟后开始发布第一条朋友圈 (留空或0表示立即开始)
+                            </div>
+                        </div>
+
+                        <div style="display: flex; gap: 12px;">
+                            <button class="btn btn-primary" @click="executeScript4" :disabled="!isScript4Valid">
+                                🚀 立即发布并启动跟圈
+                                <span v-if="autoForm.script4RunningTasks.length > 0" style="margin-left: 8px; font-size: 12px;">
+                                    ({{ autoForm.script4RunningTasks.length }}个任务执行中)
+                                </span>
+                            </button>
+                            <button class="btn" style="background: #ff4d4f; color: white;" @click="stopScript4" :disabled="autoForm.script4RunningTasks.length === 0">
+                                <span>🛑 停止跟圈任务</span>
+                            </button>
+                        </div>
+
+                        <!-- 🆕 正在执行的任务列表 - 每个任务独立显示 -->
+                        <div v-if="autoForm.script4RunningTasks.length > 0" style="margin-top: 16px;">
+                            <div style="font-weight: bold; color: #0052CC; margin-bottom: 12px; font-size: 16px;">
+                                ⏳ 正在执行的任务 ({{ autoForm.script4RunningTasks.length }}个)
+                            </div>
+
+                            <!-- 每个任务独立卡片 -->
+                            <div v-for="(task, index) in autoForm.script4RunningTasks" :key="task.taskGroupId"
+                                 style="margin-bottom: 16px; border: 2px solid #0052CC; border-radius: 8px; overflow: hidden;">
+
+                                <!-- 任务头部 -->
+                                <div style="background: #0052CC; color: white; padding: 12px; display: flex; justify-content: space-between; align-items: center;">
+                                    <div>
+                                        <div style="font-weight: bold; font-size: 15px;">📋 任务{{ index + 1 }}: {{ task.taskGroupId }}</div>
+                                        <div style="font-size: 12px; margin-top: 4px; opacity: 0.9;">
+                                            开始时间: {{ task.startTime }} |
+                                            跟圈{{ task.followCount }}次 |
+                                            间隔{{ task.intervalMinutes }}分钟 |
+                                            延迟{{ task.delayStartMinutes }}分钟
+                                        </div>
+                                    </div>
+                                    <div style="display: flex; gap: 8px; align-items: center;">
+                                        <span v-if="task.queueStatus === 'queued'" style="background: #6c757d; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                                            ⏳ 排队中 (第{{ task.queuePosition }}位)
+                                        </span>
+                                        <span v-if="task.queueStatus === 'executing' || (task.status === 'running' && !task.queueStatus)" style="background: #ffc107; color: #000; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                                            ▶️ 执行中
+                                        </span>
+                                        <span v-if="task.status === 'completed'" style="background: #28a745; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                                            ✅ 已完成
+                                        </span>
+                                        <span v-if="task.status === 'failed'" style="background: #dc3545; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                                            ❌ 失败
+                                        </span>
+                                        <button v-if="task.status === 'running'" @click="stopSingleTask(task.taskGroupId)"
+                                                style="background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                                            🛑 停止
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- 任务日志 -->
+                                <div :id="'task-logs-' + task.taskGroupId"
+                                     style="background: #f8f9fa; padding: 12px; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 12px; line-height: 1.6;">
+                                    <div v-if="task.logs.length === 0" style="color: #999; text-align: center; padding: 20px;">
+                                        等待日志输出...
+                                    </div>
+                                    <div v-for="(log, logIndex) in task.logs" :key="logIndex" style="margin-bottom: 4px; color: #333;">
+                                        {{ log }}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 16px; padding: 12px; background: #f5f5f5; border-radius: 4px; color: #666; font-size: 14px;">
+                            <div style="font-weight: bold; margin-bottom: 8px;">📋 执行流程:</div>
+                            <div>1️⃣ 根据延迟启动时间发布第1条朋友圈</div>
+                            <div>2️⃣ 创建所有跟圈任务 (在堆雪球中设置定时发布)</div>
+                            <div>3️⃣ 创建删除任务 (在数据库中记录)</div>
+                            <div>4️⃣ 系统自动在发布新朋友圈前删除旧朋友圈</div>
+                            <div>5️⃣ 最后一条朋友圈保留不删除</div>
+                            <div style="margin-top: 8px; color: #0052CC;">💡 可以同时创建多个任务,互不干扰,每个任务可单独停止</div>
+                        </div>
+
+                        <!-- 🔥 移除静态执行结果显示,改用实时日志 -->
+                    </div>
+                </div>
+
+                <!-- 公众号采集页面 -->
+                <div class="page" :class="{active: currentPage === 'collection'}">
+                    <div class="card">
+                        <div class="card-title">采集公众号文章</div>
+                        <div class="form-group">
+                            <label class="form-label">公众号文章链接</label>
+                            <input type="text" class="form-input" v-model="collectionForm.url" placeholder="请输入公众号文章链接" :disabled="collectionLoading">
+                        </div>
+                        <button class="btn btn-primary" @click="startCollection" :disabled="collectionLoading">
+                            <span v-if="!collectionLoading">开始采集</span>
+                            <span v-else>正在采集中...</span>
+                        </button>
+                    </div>
+
+                    <div class="card" v-if="collectionResult">
+                        <div class="card-title">采集结果</div>
+                        <div class="form-group">
+                            <label class="form-label">文章标题</label>
+                            <div style="font-weight: bold; color: #333;">{{ collectionResult.title }}</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">作者</label>
+                            <div style="color: #666;">{{ collectionResult.author }}</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">文章内容</label>
+                            <div style="max-height: 300px; overflow-y: auto; white-space: pre-wrap; line-height: 1.6; color: #333;">{{ collectionResult.content }}</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">文章图片 (共{{ collectionResult.images.length }}张)</label>
+                            <div class="image-preview" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; max-height: 400px; overflow-y: auto;">
+                                <div v-for="(img, index) in collectionResult.images" :key="index" style="position: relative; width: 100%; height: 150px; border: 1px solid #ddd; border-radius: 4px; overflow: hidden; background: #f5f5f5;">
+                                    <img :src="img" style="width: 100%; height: 100%; object-fit: cover; cursor: pointer;" @click="openImage(img)" @error="handleImageError($event)" :alt="'图片' + (index + 1)">
+                                    <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.5); color: white; padding: 2px 5px; font-size: 12px; text-align: center;">{{ index + 1 }}</div>
+                                </div>
+                            </div>
+                        </div>
+                        <button class="btn btn-success" @click="goToRewrite">去改写</button>
+                    </div>
+                </div>
+
+                <!-- 文案改写页面 -->
+                <div class="page" :class="{active: currentPage === 'rewrite'}">
+                    <div class="card">
+                        <div class="card-title">AI智能改写</div>
+                        <div class="form-group">
+                            <label class="form-label">原始文案</label>
+                            <textarea class="form-input form-textarea" v-model="rewriteForm.original" placeholder="请输入需要改写的文案"></textarea>
+                        </div>
+
+                        <!-- 图片编辑器 -->
+                        <div class="image-editor" v-if="rewriteForm.selectedImages.length > 0 || rewriteForm.images.length > 0">
+                            <label class="form-label">文章图片 (可删除、排序、添加)</label>
+                            <div class="image-gallery">
+                                <!-- 已选择的图片 -->
+                                <div v-for="(image, index) in rewriteForm.selectedImages" :key="index" class="image-item">
+                                    <img :src="image" :alt="'图片' + (index + 1)">
+                                    <div class="image-controls">
+                                        <button class="image-btn" @click="moveImageUp(index)" :disabled="index === 0" title="上移">↑</button>
+                                        <button class="image-btn" @click="moveImageDown(index)" :disabled="index === rewriteForm.selectedImages.length - 1" title="下移">↓</button>
+                                        <button class="image-btn" @click="removeImage(index)" title="删除">×</button>
+                                    </div>
+                                    <div class="image-order">{{ index + 1 }}</div>
+                                </div>
+                                <!-- 添加新图片按钮 -->
+                                <div class="add-image-btn" @click="showAddImageMenu" title="添加图片">
+                                    +
+                                </div>
+                            </div>
+                            <!-- 隐藏的文件上传输入框 -->
+                            <input type="file" ref="imageUpload" @change="handleImageUpload" accept="image/*" style="display: none;">
+                        </div>
+
+                        <button class="btn btn-primary" @click="startRewrite" :disabled="rewriteLoading" style="margin-top: 20px;">
+                            <span v-if="!rewriteLoading">开始改写</span>
+                            <span v-else>正在改写中...</span>
+                        </button>
+                    </div>
+
+                    <div class="card" v-if="rewriteResult">
+                        <div class="card-title">改写结果</div>
+                        <div class="form-group">
+                            <label class="form-label">改写版本1</label>
+                            <textarea v-model="rewriteResult.version1" rows="4" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">改写版本2</label>
+                            <textarea v-model="rewriteResult.version2" rows="4" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">改写版本3</label>
+                            <textarea v-model="rewriteResult.version3" rows="4" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;"></textarea>
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            <button class="btn btn-success" @click="goToPublish(1)">使用版本1发布</button>
+                            <button class="btn btn-success" @click="goToPublish(2)">使用版本2发布</button>
+                            <button class="btn btn-success" @click="goToPublish(3)">使用版本3发布</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 发布管理页面 -->
+                <div class="page" :class="{active: currentPage === 'publish'}">
+                    <!-- 创建发布任务 -->
+                    <div class="card">
+                        <div class="card-title">创建发布任务</div>
+
+                        <div class="form-group">
+                            <label class="form-label">任务标题</label>
+                            <input type="text" class="form-input" v-model="publishForm.taskTitle" placeholder="请输入任务标题(可选)">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">文案内容</label>
+                            <textarea class="form-input form-textarea" v-model="publishForm.content" placeholder="请输入要发布的文案" rows="6"></textarea>
+                        </div>
+
+                        <!-- 类型选择 -->
+                        <div class="form-group">
+                            <label class="form-label">* 类型</label>
+                            <select class="form-input" v-model="publishForm.contentType">
+                                <option value="text">文本</option>
+                                <option value="image">图片</option>
+                                <option value="video">视频</option>
+                                <option value="link">链接</option>
+                                <option value="video_account">视频号</option>
+                                <option value="video_live">视频号直播</option>
+                            </select>
+                        </div>
+
+                        <!-- 🖼️ 图片类型 - 图片上传 -->
+                        <div class="form-group" v-if="publishForm.contentType === 'image'">
+                            <label class="form-label">* 上传图片 (最多9张)</label>
+                            <div style="margin-bottom: 10px;">
+                                <input type="file" ref="publishImageInput" accept="image/jpeg,image/jpg,image/png"
+                                       multiple style="display: none;" @change="handlePublishImageUpload">
+                                <button class="btn" @click="$refs.publishImageInput.click()"
+                                        style="background: #1890ff; color: white; padding: 8px 16px; margin-right: 10px;">
+                                    📷 上传图片
+                                </button>
+                                <button class="btn" style="background: #52c41a; color: white; padding: 8px 16px;">
+                                    📚 从素材库选择
+                                </button>
+                                <div style="margin-top: 8px; color: #999; font-size: 12px;">
+                                    支持jpg/png格式,每张最大15MB
+                                </div>
+                            </div>
+
+                            <!-- 图片预览 -->
+                            <div v-if="publishForm.images && publishForm.images.length > 0"
+                                 style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px;">
+                                <div v-for="(img, index) in publishForm.images" :key="index"
+                                     style="position: relative; width: 100px; height: 100px;">
+                                    <img :src="img"
+                                         style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px; border: 1px solid #ddd;">
+                                    <button @click="removePublishImage(index)"
+                                            style="position: absolute; top: -8px; right: -8px; width: 24px; height: 24px;
+                                                   border-radius: 50%; background: #ff4d4f; color: white; border: none;
+                                                   cursor: pointer; font-size: 16px; line-height: 1; padding: 0;">
+                                        ×
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 🎬 视频类型 - 视频上传 -->
+                        <div class="form-group" v-if="publishForm.contentType === 'video'">
+                            <label class="form-label">* 上传视频</label>
+                            <div style="margin-bottom: 10px;">
+                                <input type="file" ref="publishVideoInput" accept="video/mp4"
+                                       style="display: none;" @change="handlePublishVideoUpload">
+                                <button class="btn" @click="$refs.publishVideoInput.click()"
+                                        style="background: #1890ff; color: white; padding: 8px 16px; margin-right: 10px;">
+                                    🎬 上传视频
+                                </button>
+                                <button class="btn" style="background: #52c41a; color: white; padding: 8px 16px;">
+                                    📚 从素材库选择
+                                </button>
+                                <div style="margin-top: 8px; color: #ff4d4f; font-size: 12px;">
+                                    请上传mp4格式视频,并且大小不超过25MB
+                                </div>
+                            </div>
+
+                            <!-- 视频预览 -->
+                            <div v-if="publishForm.videoUrl" style="margin-top: 10px;">
+                                <video :src="publishForm.videoUrl" controls
+                                       style="max-width: 300px; border-radius: 4px; border: 1px solid #ddd;"></video>
+                                <button @click="removePublishVideo"
+                                        style="display: block; margin-top: 10px; background: #ff4d4f; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">
+                                    删除视频
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 🔗 链接类型 - 链接输入 -->
+                        <div v-if="publishForm.contentType === 'link'">
+                            <!-- 链接地址 -->
+                            <div class="form-group">
+                                <label class="form-label">* 链接地址</label>
+                                <div style="display: flex; gap: 10px;">
+                                    <input type="url" class="form-input" v-model="publishForm.linkUrl"
+                                           placeholder="请输入链接地址" style="flex: 1;">
+                                    <button class="btn" @click="parseLinkUrl"
+                                            style="background: #1890ff; color: white; padding: 8px 16px; white-space: nowrap;">
+                                        解析地址
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- 链接描述 -->
+                            <div class="form-group">
+                                <label class="form-label">* 链接描述 (最多300字)</label>
+                                <textarea class="form-input form-textarea" v-model="publishForm.linkDescription"
+                                          placeholder="请输入链接描述" rows="3" maxlength="300"></textarea>
+                                <div style="text-align: right; color: #999; font-size: 12px; margin-top: 4px;">
+                                    {{ publishForm.linkDescription ? publishForm.linkDescription.length : 0 }}/300
+                                </div>
+                            </div>
+
+                            <!-- 链接封面 -->
+                            <div class="form-group">
+                                <label class="form-label">* 链接封面</label>
+                                <div style="margin-bottom: 10px;">
+                                    <input type="file" ref="publishLinkCoverInput" accept="image/jpeg,image/jpg,image/png"
+                                           style="display: none;" @change="handlePublishLinkCoverUpload">
+                                    <button class="btn" @click="$refs.publishLinkCoverInput.click()"
+                                            style="background: #1890ff; color: white; padding: 8px 16px; margin-right: 10px;">
+                                        📷 上传封面
+                                    </button>
+                                    <button class="btn" style="background: #52c41a; color: white; padding: 8px 16px;">
+                                        📚 从素材库选择
+                                    </button>
+                                    <div style="margin-top: 8px; color: #999; font-size: 12px;">
+                                        支持jpg/png格式,最大5MB
+                                    </div>
+                                </div>
+
+                                <!-- 封面预览 -->
+                                <div v-if="publishForm.linkCoverUrl" style="margin-top: 10px;">
+                                    <img :src="publishForm.linkCoverUrl"
+                                         style="max-width: 200px; border-radius: 4px; border: 1px solid #ddd;">
+                                    <button @click="removePublishLinkCover"
+                                            style="display: block; margin-top: 10px; background: #ff4d4f; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">
+                                        删除封面
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 📺 视频号类型 - 素材库选择 -->
+                        <div class="form-group" v-if="publishForm.contentType === 'video_account'">
+                            <label class="form-label">* 选择素材</label>
+                            <div>
+                                <button class="btn" style="background: #52c41a; color: white; padding: 8px 16px;">
+                                    📚 从素材库选择
+                                </button>
+                                <div v-if="publishForm.videoAccountMaterialId" style="margin-top: 10px; padding: 10px; background: #f0f0f0; border-radius: 4px;">
+                                    已选择素材ID: {{ publishForm.videoAccountMaterialId }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 📡 视频号直播类型 - 素材库选择 -->
+                        <div class="form-group" v-if="publishForm.contentType === 'video_live'">
+                            <label class="form-label">* 选择素材</label>
+                            <div>
+                                <button class="btn" style="background: #52c41a; color: white; padding: 8px 16px;">
+                                    📚 从素材库选择
+                                </button>
+                                <div v-if="publishForm.videoLiveMaterialId" style="margin-top: 10px; padding: 10px; background: #f0f0f0; border-radius: 4px;">
+                                    已选择素材ID: {{ publishForm.videoLiveMaterialId }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">选择微信账号</label>
+                            <select class="form-input" v-model="publishForm.account">
+                                <option value="">请选择账号</option>
+                                <option value="lifangde002">lifangde002 (堆雪球账号)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">发布方式</label>
+                            <div style="display: flex; gap: 20px; margin-bottom: 10px;">
+                                <label style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" v-model="publishForm.isImmediate" :value="true" style="margin-right: 8px;">
+                                    <span>立即发布</span>
+                                </label>
+                                <label style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" v-model="publishForm.isImmediate" :value="false" style="margin-right: 8px;">
+                                    <span>定时发布</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="form-group" v-if="!publishForm.isImmediate">
+                            <label class="form-label">发布时间</label>
+                            <input type="datetime-local" class="form-input" v-model="publishForm.publishTime">
+                        </div>
+
+                        <div class="form-group" v-if="!publishForm.isImmediate">
+                            <label class="form-label">随机延迟 (分钟)</label>
+                            <input type="number" class="form-input" v-model.number="publishForm.randomDelay"
+                                   placeholder="0-60分钟" min="0" max="60">
+                            <p style="margin-top: 8px; color: #666; font-size: 12px;">
+                                设置随机延迟可以让发布时间更自然,避免被检测为机器人
+                            </p>
+                        </div>
+
+                        <!-- 可见范围 -->
+                        <div class="form-group">
+                            <label class="form-label">可见范围</label>
+                            <div style="display: flex; flex-direction: column; gap: 10px;">
+                                <label style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" v-model="publishForm.visibilityRange" value="all" style="margin-right: 8px;">
+                                    <span>全部</span>
+                                </label>
+                                <label style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" v-model="publishForm.visibilityRange" value="private" style="margin-right: 8px;">
+                                    <span>私密</span>
+                                </label>
+                                <label style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" v-model="publishForm.visibilityRange" value="include_tags" style="margin-right: 8px;">
+                                    <span>指定标签</span>
+                                </label>
+                                <label style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" v-model="publishForm.visibilityRange" value="exclude_tags" style="margin-right: 8px;">
+                                    <span>屏蔽标签列表</span>
+                                </label>
+                                <label style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" v-model="publishForm.visibilityRange" value="include_tags_dynamic" style="margin-right: 8px;">
+                                    <span>指定标签变了,人也跟着变</span>
+                                </label>
+                                <label style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" v-model="publishForm.visibilityRange" value="exclude_tags_dynamic" style="margin-right: 8px;">
+                                    <span>屏蔽标签变了,人也跟着变</span>
+                                </label>
+                            </div>
+                            <p style="margin-top: 8px; color: #999; font-size: 12px;">
+                                可见范围仅支持微6.6.6及以上版本
+                            </p>
+                        </div>
+
+                        <!-- 追评论 -->
+                        <div class="form-group">
+                            <label class="form-label">追评论 (第{{ publishForm.comments.length }}条)</label>
+                            <div style="margin-bottom: 10px;">
+                                <button class="btn" @click="addComment" style="background: #f0f0f0; color: #666; padding: 6px 12px; font-size: 14px;">
+                                    + 新增追评
+                                </button>
+                            </div>
+                            <div v-for="(comment, index) in publishForm.comments" :key="index"
+                                 style="margin-bottom: 10px; display: flex; gap: 10px; align-items: flex-start;">
+                                <textarea class="form-input form-textarea" v-model="publishForm.comments[index]"
+                                          :placeholder="'第' + (index + 1) + '条追评论'" rows="2"
+                                          style="flex: 1;"></textarea>
+                                <button @click="removeComment(index)"
+                                        style="padding: 6px 12px; background: #ff4d4f; color: white; border: none;
+                                               border-radius: 4px; cursor: pointer; font-size: 14px;">
+                                    删除
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 显示定位 -->
+                        <div class="form-group">
+                            <label class="form-label">显示定位</label>
+                            <label style="display: flex; align-items: center; cursor: pointer;">
+                                <input type="checkbox" v-model="publishForm.useLocation" style="margin-right: 8px;">
+                                <span>使用定位</span>
+                            </label>
+                        </div>
+
+                        <!-- 随机补充内容 -->
+                        <div class="form-group">
+                            <label class="form-label">随机补充内容</label>
+                            <textarea class="form-input form-textarea" v-model="publishForm.randomContent"
+                                      placeholder="会在朋友圈文案最后插入填写的内容,多个内容用;隔开" rows="3"></textarea>
+                        </div>
+
+                        <!-- 任务结束时间 -->
+                        <div class="form-group" v-if="!publishForm.isImmediate">
+                            <label class="form-label">任务结束时间</label>
+                            <input type="datetime-local" class="form-input" v-model="publishForm.endTime">
+                            <p style="margin-top: 8px; color: #666; font-size: 12px;">
+                                如果任务执行超过这个时间,则不管有没有发送成功朋友圈,都会停止任务
+                            </p>
+                        </div>
+
+                        <div style="display: flex; gap: 10px;">
+                            <button class="btn btn-primary" @click="createPublishTask" :disabled="publishTaskCreating">
+                                {{ publishTaskCreating ? '创建中...' : '创建任务' }}
+                            </button>
+                            <button class="btn" @click="resetPublishForm" style="background: #f0f0f0; color: #666;">
+                                重置表单
+                            </button>
+                            <button class="btn" @click="previewPublish" style="background: #52c41a; color: white;">
+                                预览
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 任务列表 -->
+                    <div class="card">
+                        <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+                            <span>发布任务列表</span>
+                            <button class="btn btn-primary" @click="loadPublishTasks" style="padding: 6px 12px; font-size: 14px;">
+                                刷新列表
+                            </button>
+                        </div>
+
+                        <div v-if="publishTasksLoading" style="text-align: center; padding: 40px; color: #666;">
+                            加载中...
+                        </div>
+
+                        <div v-else-if="publishTasks.length === 0" style="text-align: center; padding: 40px; color: #999;">
+                            暂无发布任务
+                        </div>
+
+                        <table class="table" v-else>
+                            <thead>
+                                <tr>
+                                    <th>任务标题</th>
+                                    <th>文案内容</th>
+                                    <th>图片</th>
+                                    <th>微信账号</th>
+                                    <th>发布时间</th>
+                                    <th>状态</th>
+                                    <th>创建时间</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="task in publishTasks" :key="task.id">
+                                    <td>{{ task.task_title || '无标题' }}</td>
+                                    <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                        {{ task.content }}
+                                    </td>
+                                    <td>
+                                        <span v-if="task.images && task.images.length > 0">
+                                            {{ task.images.length }}张
+                                        </span>
+                                        <span v-else style="color: #999;">无图片</span>
+                                    </td>
+                                    <td>{{ task.wechat_account || '-' }}</td>
+                                    <td>
+                                        <span v-if="task.is_immediate" style="color: #52c41a;">立即发布</span>
+                                        <span v-else>{{ formatDateTime(task.publish_time) }}</span>
+                                    </td>
+                                    <td>
+                                        <span class="tag" :class="{
+                                            'tag-warning': task.status === 'pending',
+                                            'tag-info': task.status === 'processing',
+                                            'tag-success': task.status === 'completed',
+                                            'tag-danger': task.status === 'failed'
+                                        }">
+                                            {{ getStatusText(task.status) }}
+                                        </span>
+                                    </td>
+                                    <td>{{ formatDateTime(task.created_at) }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 堆雪球账号设置页面 -->
+                <div class="page" :class="{active: currentPage === 'accounts'}">
+                    <div class="card">
+                        <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+                            <span>堆雪球账号管理</span>
+                            <button v-if="duixueqiuAccounts.length === 0" class="btn btn-primary" @click="showAddDuixueqiuAccountForm">
+                                ➕ 添加账号
+                            </button>
+                            <span v-else style="color: #999; font-size: 14px;">每个用户只能配置一个堆雪球账号</span>
+                        </div>
+
+                        <div v-if="duixueqiuAccountsLoading" style="text-align: center; padding: 40px;">
+                            <div class="loading-spinner"></div>
+                            <p style="margin-top: 16px; color: #666;">加载中...</p>
+                        </div>
+
+                        <div v-else-if="duixueqiuAccounts.length === 0" style="text-align: center; padding: 40px; color: #999;">
+                            <p>暂无堆雪球账号,请点击上方"➕ 添加账号"按钮添加</p>
+                            <p style="font-size: 12px; margin-top: 10px;">提示:每个用户只能配置一个堆雪球账号</p>
+                        </div>
+
+                        <table v-else class="table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>堆雪球用户名</th>
+                                    <th>创建时间</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="account in duixueqiuAccounts" :key="account.id">
+                                    <td>{{ account.id }}</td>
+                                    <td>{{ account.username }}</td>
+                                    <td>{{ formatDate(account.created_at) }}</td>
+                                    <td>
+                                        <button class="btn btn-sm btn-primary" @click="showEditDuixueqiuAccountForm(account)">编辑</button>
+                                        <button class="btn btn-sm btn-danger" @click="deleteDuixueqiuAccount(account.id)">删除</button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- 添加/编辑账号对话框 -->
+                    <div v-if="duixueqiuAccountFormVisible" class="modal-overlay" @click.self="duixueqiuAccountFormVisible = false">
+                        <div class="modal-content" style="max-width: 500px;">
+                            <div class="modal-header">
+                                <h3>{{ duixueqiuAccountForm.id ? '编辑账号' : '添加账号' }}</h3>
+                                <button class="modal-close" @click="duixueqiuAccountFormVisible = false">×</button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="form-group">
+                                    <label class="form-label">堆雪球用户名</label>
+                                    <input type="text" class="form-input" v-model="duixueqiuAccountForm.username" placeholder="请输入堆雪球用户名" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">堆雪球密码</label>
+                                    <input type="password" class="form-input" v-model="duixueqiuAccountForm.password" placeholder="请输入堆雪球密码" autocomplete="new-password">
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-secondary" @click="duixueqiuAccountFormVisible = false" :disabled="duixueqiuAccountFormLoading">取消</button>
+                                <button class="btn btn-primary" @click="saveDuixueqiuAccount" :disabled="duixueqiuAccountFormLoading">
+                                    {{ duixueqiuAccountFormLoading ? '保存中...' : '保存' }}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Coze配置页面 -->
+                <div class="page" :class="{active: currentPage === 'coze-config'}">
+                    <div class="card">
+                        <div class="card-title">Coze API配置</div>
+                        <div class="form-group">
+                            <label class="form-label">Coze API Token</label>
+                            <input type="text" class="form-input" placeholder="请输入Coze API Token" v-model="cozeConfig.token">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">采集工作流ID</label>
+                            <input type="text" class="form-input" placeholder="请输入公众号采集工作流ID" v-model="cozeConfig.collectionWorkflowId">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">转写工作流ID</label>
+                            <input type="text" class="form-input" placeholder="请输入文案转写工作流ID" v-model="cozeConfig.rewriteWorkflowId">
+                        </div>
+                        <button class="btn btn-primary" @click="saveCozeConfig">保存配置</button>
+                    </div>
+                </div>
+
+                <!-- 飞书多维表格配置页面 -->
+                <div class="page" :class="{active: currentPage === 'feishu-config'}">
+                    <div class="card">
+                        <div class="card-title">飞书多维表格配置</div>
+                        <div class="form-group">
+                            <label class="form-label">飞书应用ID (App ID)</label>
+                            <input type="text" class="form-input" placeholder="请输入飞书应用ID" v-model="feishuConfig.appId">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">飞书应用密钥 (App Secret)</label>
+                            <input type="password" class="form-input" placeholder="请输入飞书应用密钥" v-model="feishuConfig.appSecret">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">多维表格ID</label>
+                            <input type="text" class="form-input" placeholder="请输入多维表格ID" v-model="feishuConfig.tableId">
+                        </div>
+                        <button class="btn btn-primary" @click="saveFeishuConfig">保存配置</button>
+                    </div>
+                </div>
+
+                <!-- 公众号监控页面 - iframe嵌入 -->
+                <div class="page" :class="{active: currentPage === 'wechat-monitor'}">
+                    <div class="iframe-container">
+                        <iframe src="wechat-subscription.html" frameborder="0"></iframe>
+                    </div>
+                </div>
+
+                <!-- 系统设置页面 -->
+                <div class="page" :class="{active: currentPage === 'settings'}">
+                    <div class="card">
+                        <div class="card-title">系统配置</div>
+                        <div class="form-group">
+                            <label class="form-label">Coze API密钥</label>
+                            <input type="text" class="form-input" placeholder="请输入Coze API密钥">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">飞书应用ID</label>
+                            <input type="text" class="form-input" placeholder="请输入飞书应用ID">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">堆雪球账号</label>
+                            <input type="text" class="form-input" placeholder="请输入堆雪球账号">
+                        </div>
+                        <button class="btn btn-primary">保存设置</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    currentPage: 'auto-workflow',
+                    userName: '刀仔老板',
+                    userAvatar: '刀',
+                    userId: null,  // 用户ID
+                    mobileMenuOpen: false,  // 移动端菜单状态
+                    menuGroups: {
+                        auto: false,
+                        manual: false,
+                        api: false
+                    },
+                    collectionForm: {
+                        url: ''
+                    },
+                    collectionLoading: false,
+                    collectionResult: null,
+                    rewriteForm: {
+                        articleId: null,
+                        original: '',
+                        images: [],  // 原始图片列表
+                        selectedImages: []  // 用户选择的图片列表
+                    },
+                    rewriteLoading: false,
+                    rewriteResult: null,
+                    publishForm: {
+                        taskTitle: '',
+                        content: '',
+                        contentType: 'text',  // 类型: text/image/video/link/video_account/video_live
+                        images: [],
+                        account: '',
+                        isImmediate: true,
+                        publishTime: '',
+                        randomDelay: 0,
+                        // 新增功能字段
+                        visibilityRange: 'all',  // 可见范围: all/private/include_tags/exclude_tags/include_tags_dynamic/exclude_tags_dynamic
+                        selectedTags: [],  // 选择的标签
+                        comments: [],  // 追评论列表
+                        useLocation: false,  // 是否使用定位
+                        randomContent: '',  // 随机补充内容(用;分隔)
+                        endTime: '',  // 任务结束时间
+                        // 视频类型字段
+                        videoUrl: '',  // 视频URL
+                        // 链接类型字段
+                        linkUrl: '',  // 链接地址
+                        linkDescription: '',  // 链接描述
+                        linkCoverUrl: '',  // 链接封面URL
+                        // 视频号类型字段
+                        videoAccountMaterialId: '',  // 视频号素材ID
+                        // 视频号直播类型字段
+                        videoLiveMaterialId: ''  // 视频号直播素材ID
+                    },
+                    publishTasks: [],
+                    publishTasksLoading: false,
+                    publishTaskCreating: false,
+                    socket: null, // WebSocket连接
+                    autoForm: {
+                        selectedScript: 'script1', // 当前选择的脚本
+                        script1Loading: false, // 脚本1执行状态(至少有一个任务在执行)
+                        script1RunningTasks: [], // 🆕 正在执行的Script 1任务列表 [{taskId, logs: [], startTime, status, url}]
+                        script3Loading: false, // 脚本3执行状态
+                        script4Loading: false, // 脚本4执行状态(至少有一个任务在执行)
+                        script4RunningTasks: [], // 🆕 正在执行的Script 4任务列表 [{taskGroupId, logs: [], startTime, status}]
+                        script1Result: null, // 脚本1执行结果
+                        script3Result: null, // 脚本3执行结果
+                        script4Result: null, // 脚本4执行结果
+                        script1Logs: [], // 脚本1流式日志 (已废弃,改用script1RunningTasks中的logs)
+                        script3Logs: [], // 脚本3流式日志
+                        script4Logs: [], // 脚本4流式日志 (已废弃,改用script4RunningTasks中的logs)
+                        // 脚本1: 输入链接自动发布
+                        script1: {
+                            url: '',
+                            isImmediate: true,
+                            publishTime: '',
+                            contentType: 'image',
+                            selectedAccounts: [],
+                            selectedTags: [],
+                            useLocation: false,
+                            comments: '',
+                            randomContent: ''
+                        },
+                        // 脚本3: 定时监控自动发布
+                        script3: {
+                            accountIds: [],
+                            autoRewrite: true,
+                            autoPublish: true,
+                            publishDelay: 0,
+                            contentType: 'image',
+                            selectedAccounts: [],
+                            selectedTags: [],
+                            useLocation: false,
+                            comments: '',
+                            randomContent: ''
+                        },
+                        // 脚本4: 跟圈自动化
+                        script4: {
+                            content: '',
+                            images: [],
+                            contentType: 'text', // 内容类型: text/image
+                            followCount: 3,
+                            intervalMinutes: 30, // 默认30分钟
+                            randomDelayMinutes: 0, // 默认不使用随机延迟
+                            delayStartMinutes: 0 // 默认立即开始
+                        }
+                    },
+                    cozeConfig: {
+                        token: '',
+                        collectionWorkflowId: '',
+                        rewriteWorkflowId: ''
+                    },
+                    feishuConfig: {
+                        appId: '',
+                        appSecret: '',
+                        tableId: ''
+                    },
+                    // 堆雪球账号管理
+                    duixueqiuAccounts: [],
+                    duixueqiuAccountsLoading: false,
+                    duixueqiuAccountForm: {
+                        id: null,
+                        username: '',
+                        password: ''
+                    },
+                    duixueqiuAccountFormVisible: false,
+                    duixueqiuAccountFormLoading: false,
+                    // 公众号监控相关数据
+                    wechatMonitor: {
+                        activeTab: 'articles',
+                        loading: false,
+                        subscriptions: [],
+                        articles: [],
+                        selectedMp: null,
+                        totalArticles: 0,
+                        allArticlesCount: 0,
+                        qrCodeUrl: '',
+                        qrStatus: '点击按钮获取二维码',
+                        qrCheckInterval: null,
+                        searchKeyword: '',
+                        searchResults: [],
+                        selectedMpData: null,
+                        newSubscription: {
+                            name: '',
+                            mp_id: '',
+                            description: ''
+                        },
+                        syncInterval: 30,
+                        showArticleModal: false,
+                        currentArticle: null
+                    },
+                    // 自动检测环境: 本地开发使用localhost:3000, 生产环境使用autochat.lfdhk.com
+                    apiBaseUrl: window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+                        ? 'http://localhost:3000/api'
+                        : 'https://autochat.lfdhk.com/api',
+                    rssApiUrl: 'http://localhost:8001/api/v1/wx'
+                }
+            },
+            computed: {
+                pageTitle() {
+                    const titles = {
+                        dashboard: '仪表盘',
+                        'auto-workflow': '自动模式 - 一键发布',
+                        'wechat-monitor': '公众号监控',
+                        collection: '手动模式 - 公众号提取',
+                        rewrite: '手动模式 - 文案转写',
+                        publish: '手动模式 - 自动发布',
+                        accounts: '堆雪球账号设置',
+                        'coze-config': 'API配置 - Coze',
+                        'feishu-config': 'API配置 - 飞书多维表格',
+                        settings: '系统设置'
+                    };
+                    return titles[this.currentPage] || '朋友圈发布系统';
+                },
+                // 脚本4表单验证
+                isScript4Valid() {
+                    return this.autoForm.script4.content.trim() !== '' &&
+                           this.autoForm.script4.followCount >= 1 &&
+                           this.autoForm.script4.followCount <= 10 &&
+                           this.autoForm.script4.intervalMinutes >= 1 &&
+                           this.autoForm.script4.intervalMinutes <= 1440; // 最多24小时
+                }
+            },
+            methods: {
+                // 堆雪球相关方法
+                openDuixueqiuInNewTab() {
+                    window.open('https://dxqscrm.duixueqiu.cn/', '_blank');
+                },
+
+                // 移动端菜单控制
+                toggleMobileMenu() {
+                    this.mobileMenuOpen = !this.mobileMenuOpen;
+                },
+                closeMobileMenu() {
+                    this.mobileMenuOpen = false;
+                },
+                toggleMenuGroup(groupName) {
+                    this.menuGroups[groupName] = !this.menuGroups[groupName];
+                    // 移动端点击菜单项后自动关闭菜单
+                    if (window.innerWidth <= 768) {
+                        setTimeout(() => {
+                            this.closeMobileMenu();
+                        }, 300);
+                    }
+                },
+                async startCollection() {
+                    if (!this.collectionForm.url) {
+                        alert('请输入公众号文章链接');
+                        return;
+                    }
+
+                    // 显示加载状态
+                    this.collectionLoading = true;
+                    this.collectionResult = null;
+
+                    try {
+                        console.log('正在采集文章...');
+
+                        // 调用后端API
+                        const response = await fetch('https://autochat.lfdhk.com/api/collection/extract', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                url: this.collectionForm.url
+                            })
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`API请求失败: ${response.status}`);
+                        }
+
+                        const data = await response.json();
+                        console.log('后端API响应:', data);
+
+                        if (!data.success) {
+                            throw new Error(data.message || '采集失败');
+                        }
+
+                        this.collectionResult = {
+                            title: data.data.title,
+                            author: data.data.author,
+                            content: data.data.content,
+                            images: data.data.images // 这里是Supabase的图片URL
+                        };
+
+                        console.log('✅ 采集成功!');
+
+                    } catch (error) {
+                        console.error('采集失败:', error);
+                        alert('采集失败: ' + error.message);
+                    } finally {
+                        // 关闭加载状态
+                        this.collectionLoading = false;
+                    }
+                },
+                goToRewrite() {
+                    this.currentPage = 'rewrite';
+                    this.rewriteForm.original = this.collectionResult.content;
+                    this.rewriteForm.images = this.collectionResult.images || [];
+                    this.rewriteForm.selectedImages = [...(this.collectionResult.images || [])];  // 默认选中所有图片
+                },
+                async startRewrite() {
+                    if (!this.rewriteForm.original) {
+                        alert('请先输入需要改写的文案');
+                        return;
+                    }
+
+                    this.rewriteLoading = true;
+
+                    try {
+                        // 显示加载状态
+                        this.rewriteResult = {
+                            version1: '正在调用Coze AI生成版本1...',
+                            version2: '正在调用Coze AI生成版本2...',
+                            version3: '正在调用Coze AI生成版本3...'
+                        };
+
+                        const response = await fetch(`${this.apiBaseUrl}/coze/rewrite`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${localStorage.getItem('token')}`
+                            },
+                            body: JSON.stringify({
+                                content: this.rewriteForm.original,
+                                images: this.rewriteForm.selectedImages,
+                                articleId: this.rewriteForm.articleId
+                            })
+                        });
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            this.rewriteResult = {
+                                version1: data.data.version1,
+                                version2: data.data.version2,
+                                version3: data.data.version3
+                            };
+                            console.log('✅ 转写成功!已生成3个版本的文案');
+                        } else {
+                            alert('转写失败: ' + (data.message || '未知错误'));
+                            this.rewriteResult = {
+                                version1: '',
+                                version2: '',
+                                version3: ''
+                            };
+                        }
+                    } catch (error) {
+                        console.error('转写失败:', error);
+                        alert('转写失败: ' + error.message);
+                        this.rewriteResult = {
+                            version1: '',
+                            version2: '',
+                            version3: ''
+                        };
+                    } finally {
+                        this.rewriteLoading = false;
+                    }
+                },
+                goToPublish(version = 1) {
+                    this.currentPage = 'publish';
+                    // 根据选择的版本设置发布内容
+                    if (version === 1) {
+                        this.publishForm.content = this.rewriteResult.version1;
+                    } else if (version === 2) {
+                        this.publishForm.content = this.rewriteResult.version2;
+                    } else if (version === 3) {
+                        this.publishForm.content = this.rewriteResult.version3;
+                    }
+                    // 同时设置图片
+                    this.publishForm.images = this.rewriteForm.selectedImages || [];
+                },
+                async createPublishTask() {
+                    // 验证表单
+                    if (!this.publishForm.content.trim()) {
+                        alert('请输入文案内容');
+                        return;
+                    }
+                    if (!this.publishForm.account) {
+                        alert('请选择微信账号');
+                        return;
+                    }
+                    if (!this.publishForm.isImmediate && !this.publishForm.publishTime) {
+                        alert('请选择发布时间');
+                        return;
+                    }
+
+                    this.publishTaskCreating = true;
+
+                    try {
+                        const token = localStorage.getItem('token');
+                        const user = JSON.parse(localStorage.getItem('user') || '{}');
+
+                        // 准备发布时间
+                        let publishTime;
+                        if (this.publishForm.isImmediate) {
+                            publishTime = new Date().toISOString();
+                        } else {
+                            publishTime = new Date(this.publishForm.publishTime).toISOString();
+                        }
+
+                        const response = await fetch('https://autochat.lfdhk.com/api/publish/create', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${token}`
+                            },
+                            body: JSON.stringify({
+                                userId: user.id,
+                                taskTitle: this.publishForm.taskTitle || '朋友圈发布任务',
+                                content: this.publishForm.content,
+                                contentType: this.publishForm.contentType,  // 类型
+                                images: this.publishForm.images,
+                                wechatAccount: this.publishForm.account,
+                                publishTime: publishTime,
+                                isImmediate: this.publishForm.isImmediate,
+                                randomDelayMinutes: this.publishForm.randomDelay || 0,
+                                // 新增字段
+                                visibilityRange: this.publishForm.visibilityRange,
+                                selectedTags: this.publishForm.selectedTags,
+                                comments: this.publishForm.comments.filter(c => c.trim()),
+                                useLocation: this.publishForm.useLocation,
+                                randomContent: this.publishForm.randomContent,
+                                endTime: this.publishForm.endTime ? new Date(this.publishForm.endTime).toISOString() : null
+                            })
+                        });
+
+                        const result = await response.json();
+
+                        if (response.ok) {
+                            console.log('✅ 发布任务创建成功！');
+                            // 重置表单
+                            this.resetPublishForm();
+                            // 刷新任务列表
+                            await this.loadPublishTasks();
+                        } else {
+                            alert('创建失败: ' + (result.message || '未知错误'));
+                        }
+                    } catch (error) {
+                        console.error('创建发布任务失败:', error);
+                        alert('创建失败: ' + error.message);
+                    } finally {
+                        this.publishTaskCreating = false;
+                    }
+                },
+                resetPublishForm() {
+                    this.publishForm = {
+                        taskTitle: '',
+                        content: '',
+                        contentType: 'text',
+                        images: [],
+                        account: '',
+                        isImmediate: true,
+                        publishTime: '',
+                        randomDelay: 0,
+                        visibilityRange: 'all',
+                        selectedTags: [],
+                        comments: [],
+                        useLocation: false,
+                        randomContent: '',
+                        endTime: '',
+                        // 视频类型字段
+                        videoUrl: '',
+                        // 链接类型字段
+                        linkUrl: '',
+                        linkDescription: '',
+                        linkCoverUrl: '',
+                        // 视频号类型字段
+                        videoAccountMaterialId: '',
+                        // 视频号直播类型字段
+                        videoLiveMaterialId: ''
+                    };
+                    // 清空文件输入框
+                    if (this.$refs.publishImageInput) {
+                        this.$refs.publishImageInput.value = '';
+                    }
+                    if (this.$refs.publishVideoInput) {
+                        this.$refs.publishVideoInput.value = '';
+                    }
+                    if (this.$refs.publishLinkCoverInput) {
+                        this.$refs.publishLinkCoverInput.value = '';
+                    }
+                },
+                addComment() {
+                    this.publishForm.comments.push('');
+                },
+                removeComment(index) {
+                    this.publishForm.comments.splice(index, 1);
+                },
+                previewPublish() {
+                    // 预览朋友圈效果
+                    let previewText = '=== 朋友圈预览 ===\n\n';
+                    previewText += `📝 文案内容:\n${this.publishForm.content}\n\n`;
+
+                    if (this.publishForm.images.length > 0) {
+                        previewText += `🖼️ 图片: ${this.publishForm.images.length}张\n\n`;
+                    }
+
+                    if (this.publishForm.comments.length > 0) {
+                        previewText += `💬 追评论:\n`;
+                        this.publishForm.comments.forEach((comment, index) => {
+                            if (comment.trim()) {
+                                previewText += `  ${index + 1}. ${comment}\n`;
+                            }
+                        });
+                        previewText += '\n';
+                    }
+
+                    if (this.publishForm.randomContent) {
+                        const randomContents = this.publishForm.randomContent.split(';').filter(c => c.trim());
+                        if (randomContents.length > 0) {
+                            previewText += `🎲 随机补充内容(将随机选择一个):\n`;
+                            randomContents.forEach((content, index) => {
+                                previewText += `  ${index + 1}. ${content.trim()}\n`;
+                            });
+                            previewText += '\n';
+                        }
+                    }
+
+                    previewText += `👁️ 可见范围: `;
+                    const visibilityMap = {
+                        'all': '全部',
+                        'private': '私密',
+                        'include_tags': '指定标签',
+                        'exclude_tags': '屏蔽标签列表',
+                        'include_tags_dynamic': '指定标签变了,人也跟着变',
+                        'exclude_tags_dynamic': '屏蔽标签变了,人也跟着变'
+                    };
+                    previewText += visibilityMap[this.publishForm.visibilityRange] || '全部';
+                    previewText += '\n\n';
+
+                    if (this.publishForm.useLocation) {
+                        previewText += `📍 显示定位: 是\n\n`;
+                    }
+
+                    previewText += `⏰ 发布方式: ${this.publishForm.isImmediate ? '立即发布' : '定时发布'}\n`;
+                    if (!this.publishForm.isImmediate) {
+                        previewText += `⏰ 发布时间: ${this.publishForm.publishTime}\n`;
+                        if (this.publishForm.randomDelay > 0) {
+                            previewText += `🎲 随机延迟: ${this.publishForm.randomDelay}分钟\n`;
+                        }
+                        if (this.publishForm.endTime) {
+                            previewText += `⏱️ 任务结束时间: ${this.publishForm.endTime}\n`;
+                        }
+                    }
+
+                    alert(previewText);
+                },
+                handlePublishImageUpload(event) {
+                    const files = event.target.files;
+                    if (!files || files.length === 0) return;
+
+                    // 检查图片数量限制
+                    const currentCount = this.publishForm.images.length;
+                    const newCount = files.length;
+                    if (currentCount + newCount > 9) {
+                        alert(`最多只能上传9张图片,当前已有${currentCount}张,只能再添加${9 - currentCount}张`);
+                        return;
+                    }
+
+                    // 读取并转换图片为Base64
+                    Array.from(files).forEach(file => {
+                        // 检查文件类型
+                        if (!file.type.match(/image\/(jpeg|jpg|png)/)) {
+                            alert(`文件 ${file.name} 格式不支持,只支持jpg、png格式`);
+                            return;
+                        }
+
+                        // 检查文件大小(15MB)
+                        if (file.size > 15 * 1024 * 1024) {
+                            alert(`文件 ${file.name} 太大,最大支持15MB`);
+                            return;
+                        }
+
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            this.publishForm.images.push(e.target.result);
+                        };
+                        reader.readAsDataURL(file);
+                    });
+                },
+                removePublishImage(index) {
+                    this.publishForm.images.splice(index, 1);
+                },
+                // 处理视频上传
+                handlePublishVideoUpload(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    // 检查文件类型
+                    if (!file.type.match(/video\/mp4/)) {
+                        alert('只支持mp4格式的视频');
+                        return;
+                    }
+
+                    // 检查文件大小 (25MB = 25 * 1024 * 1024 bytes)
+                    const maxSize = 25 * 1024 * 1024;
+                    if (file.size > maxSize) {
+                        alert('视频大小不能超过25MB');
+                        return;
+                    }
+
+                    // 读取并转换视频为Base64
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        this.publishForm.videoUrl = e.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                },
+                // 删除视频
+                removePublishVideo() {
+                    this.publishForm.videoUrl = '';
+                    if (this.$refs.publishVideoInput) {
+                        this.$refs.publishVideoInput.value = '';
+                    }
+                },
+                // 处理链接封面上传
+                handlePublishLinkCoverUpload(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    // 检查文件类型
+                    if (!file.type.match(/image\/(jpeg|jpg|png)/)) {
+                        alert('只支持jpg/png格式的图片');
+                        return;
+                    }
+
+                    // 检查文件大小 (5MB = 5 * 1024 * 1024 bytes)
+                    const maxSize = 5 * 1024 * 1024;
+                    if (file.size > maxSize) {
+                        alert('封面图片大小不能超过5MB');
+                        return;
+                    }
+
+                    // 读取并转换图片为Base64
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        this.publishForm.linkCoverUrl = e.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                },
+                // 删除链接封面
+                removePublishLinkCover() {
+                    this.publishForm.linkCoverUrl = '';
+                    if (this.$refs.publishLinkCoverInput) {
+                        this.$refs.publishLinkCoverInput.value = '';
+                    }
+                },
+                // 解析链接地址
+                parseLinkUrl() {
+                    if (!this.publishForm.linkUrl) {
+                        alert('请先输入链接地址');
+                        return;
+                    }
+                    // TODO: 实现链接解析功能,自动获取标题、描述、封面等
+                    alert('链接解析功能开发中...');
+                },
+                async loadPublishTasks() {
+                    this.publishTasksLoading = true;
+                    try {
+                        const token = localStorage.getItem('token');
+                        const user = JSON.parse(localStorage.getItem('user') || '{}');
+
+                        console.log('开始加载任务列表, userId:', user.id);
+
+                        const response = await fetch(`https://autochat.lfdhk.com/api/publish/tasks?userId=${user.id}`, {
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+
+                        console.log('API响应状态:', response.status);
+                        const result = await response.json();
+                        console.log('API响应数据:', result);
+
+                        if (response.ok) {
+                            // API返回的数据结构是 {success: true, data: {tasks: [...], total: ...}}
+                            this.publishTasks = result.data?.tasks || result.data || [];
+                            console.log('✅ 加载任务列表成功, 任务数量:', this.publishTasks.length);
+                            console.log('任务列表:', this.publishTasks);
+                        } else {
+                            console.error('❌ 加载任务列表失败:', result.message);
+                            this.publishTasks = [];
+                        }
+                    } catch (error) {
+                        console.error('❌ 加载任务列表异常:', error);
+                        this.publishTasks = [];
+                    } finally {
+                        this.publishTasksLoading = false;
+                    }
+                },
+                formatDateTime(dateString) {
+                    if (!dateString) return '-';
+
+                    // 解析UTC时间
+                    let date = new Date(dateString);
+
+                    // 检查日期是否有效
+                    if (isNaN(date.getTime())) {
+                        return '-';
+                    }
+
+                    // 如果dateString不包含时区信息,Supabase返回的是UTC时间
+                    // 需要转换为本地时间(北京时间 = UTC+8)
+                    if (!dateString.includes('+') && !dateString.includes('Z')) {
+                        // 如果没有时区标识,手动添加Z表示UTC时间
+                        date = new Date(dateString + 'Z');
+                    }
+
+                    const year = date.getFullYear();
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const day = String(date.getDate()).padStart(2, '0');
+                    const hours = String(date.getHours()).padStart(2, '0');
+                    const minutes = String(date.getMinutes()).padStart(2, '0');
+                    const seconds = String(date.getSeconds()).padStart(2, '0');
+                    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+                },
+                getStatusText(status) {
+                    const statusMap = {
+                        'pending': '待发布',
+                        'processing': '发布中',
+                        'completed': '已完成',
+                        'failed': '失败'
+                    };
+                    return statusMap[status] || status;
+                },
+                handleImageError(event) {
+                    console.error('图片加载失败:', event.target.src);
+                    event.target.style.display = 'none';
+                    const parent = event.target.parentElement;
+                    if (parent) {
+                        parent.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #999; font-size: 12px;">加载失败</div>';
+                    }
+                },
+                openImage(url) {
+                    window.open(url, '_blank');
+                },
+                handleLogout() {
+                    if (confirm('确定要退出登录吗?')) {
+                        // 清除登录信息
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('user');
+                        // 跳转到登录页面
+                        window.location.href = 'login.html';
+                    }
+                },
+                // 执行脚本1: 输入链接自动发布
+                async executeScript1() {
+                    if (!this.autoForm.script1.url) {
+                        alert('请输入公众号文章链接');
+                        return;
+                    }
+
+                    if (!this.autoForm.script1.isImmediate && !this.autoForm.script1.publishTime) {
+                        alert('请选择发布时间');
+                        return;
+                    }
+
+                    try {
+                        console.log('🚀 开始执行脚本1: 输入链接自动发布');
+
+                        // 🔥 确保WebSocket已连接
+                        if (!this.socket || !this.socket.connected) {
+                            console.log('⚠️ WebSocket未连接,重新初始化...');
+                            this.initWebSocket();
+                            // 等待连接建立
+                            await new Promise(resolve => {
+                                if (this.socket.connected) {
+                                    resolve();
+                                } else {
+                                    this.socket.once('connect', resolve);
+                                }
+                            });
+                            console.log('✅ WebSocket连接已建立');
+                        }
+
+                        // 🆕 提前生成临时任务ID并创建任务对象
+                        const tempTaskId = `script1_${Date.now()}`;
+                        const taskObj = {
+                            taskId: tempTaskId,
+                            logs: ['⏳ 正在创建任务...'],
+                            startTime: new Date().toLocaleTimeString('zh-CN'),
+                            status: 'running',
+                            url: this.autoForm.script1.url,
+                            isImmediate: this.autoForm.script1.isImmediate
+                        };
+                        this.autoForm.script1RunningTasks.push(taskObj);
+                        this.autoForm.script1Loading = true;
+                        console.log('📋 预创建任务对象,临时ID:', tempTaskId);
+
+                        // 发送POST请求
+                        const response = await fetch('https://autochat.lfdhk.com/api/automation/script1/link-auto-publish', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                url: this.autoForm.script1.url,
+                                userId: this.userId,
+                                isImmediate: this.autoForm.script1.isImmediate,
+                                publishTime: this.autoForm.script1.publishTime || '',
+                                contentType: this.autoForm.script1.contentType,
+                                selectedAccounts: this.autoForm.script1.selectedAccounts || [],
+                                selectedTags: this.autoForm.script1.selectedTags || [],
+                                useLocation: this.autoForm.script1.useLocation,
+                                comments: this.autoForm.script1.comments ? this.autoForm.script1.comments.split(',') : [],
+                                randomContent: this.autoForm.script1.randomContent || '',
+                                tempTaskId: tempTaskId // 🆕 传递临时ID给后端
+                            })
+                        });
+
+                        const result = await response.json();
+
+                        if (result.success && result.taskId) {
+                            // 🆕 更新任务对象的真实ID
+                            taskObj.taskId = result.taskId;
+                            taskObj.logs.push('✅ 任务创建成功,开始执行...');
+                            console.log('✅ 任务创建成功,真实ID:', result.taskId);
+                            console.log('📊 当前运行任务数:', this.autoForm.script1RunningTasks.length);
+                        } else {
+                            // 失败时移除任务对象
+                            const index = this.autoForm.script1RunningTasks.findIndex(t => t.taskId === tempTaskId);
+                            if (index > -1) {
+                                this.autoForm.script1RunningTasks.splice(index, 1);
+                            }
+                            if (this.autoForm.script1RunningTasks.length === 0) {
+                                this.autoForm.script1Loading = false;
+                            }
+                            alert('❌ 任务创建失败: ' + result.message);
+                        }
+
+                    } catch (error) {
+                        console.error('❌ 脚本1执行异常:', error);
+                        alert('执行失败: ' + error.message);
+                    }
+                },
+
+                // 🆕 停止单个Script 1任务
+                async stopSingleScript1Task(taskId) {
+                    if (!confirm(`确定要停止任务 ${taskId} 吗?`)) {
+                        return;
+                    }
+
+                    try {
+                        console.log('🛑 停止Script 1任务:', taskId);
+
+                        // 更新任务状态
+                        const task = this.autoForm.script1RunningTasks.find(t => t.taskId === taskId);
+                        if (task) {
+                            task.status = 'stopped';
+                            task.logs.push('🛑 任务已手动停止');
+
+                            // 3秒后从列表中移除
+                            setTimeout(() => {
+                                const index = this.autoForm.script1RunningTasks.findIndex(t => t.taskId === taskId);
+                                if (index > -1) {
+                                    this.autoForm.script1RunningTasks.splice(index, 1);
+
+                                    // 如果没有任务在执行了,更新loading状态
+                                    if (this.autoForm.script1RunningTasks.length === 0) {
+                                        this.autoForm.script1Loading = false;
+                                    }
+                                }
+                            }, 3000);
+
+                            alert('✅ 任务已停止!');
+                        }
+                    } catch (error) {
+                        console.error('❌ 停止任务异常:', error);
+                        alert('停止失败: ' + error.message);
+                    }
+                },
+
+                // 执行脚本3: 定时监控自动发布
+                async executeScript3() {
+                    this.autoForm.script3Loading = true;
+                    this.autoForm.script3Result = null;
+
+                    try {
+                        console.log('🚀 开始执行脚本3: 定时监控自动发布');
+
+                        const response = await fetch('https://autochat.lfdhk.com/api/automation/script3/monitor-auto-publish', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                userId: this.userId,
+                                accountIds: this.autoForm.script3.accountIds,
+                                autoRewrite: this.autoForm.script3.autoRewrite,
+                                autoPublish: this.autoForm.script3.autoPublish,
+                                publishDelay: this.autoForm.script3.publishDelay,
+                                contentType: this.autoForm.script3.contentType,
+                                selectedAccounts: this.autoForm.script3.selectedAccounts,
+                                selectedTags: this.autoForm.script3.selectedTags,
+                                useLocation: this.autoForm.script3.useLocation,
+                                comments: this.autoForm.script3.comments,
+                                randomContent: this.autoForm.script3.randomContent
+                            })
+                        });
+
+                        const result = await response.json();
+                        this.autoForm.script3Result = result;
+
+                        if (result.success) {
+                            console.log('✅ 脚本3执行成功!');
+                        } else {
+                            console.error('❌ 脚本3执行失败:', result.message);
+                        }
+                    } catch (error) {
+                        console.error('❌ 脚本3执行异常:', error);
+                        this.autoForm.script3Result = {
+                            success: false,
+                            message: '执行失败: ' + error.message
+                        };
+                    } finally {
+                        this.autoForm.script3Loading = false;
+                    }
+                },
+
+                // 执行脚本4: 跟圈自动化
+                async executeScript4() {
+                    this.autoForm.script4Loading = true;
+                    this.autoForm.script4Result = null;
+                    this.autoForm.script4Logs = [];
+
+                    try {
+                        console.log('🚀 开始执行脚本4: 跟圈自动化');
+
+                        // 自动匹配内容类型
+                        const contentType = this.autoForm.script4.images && this.autoForm.script4.images.length > 0 ? 'image' : 'text';
+                        console.log('📝 自动匹配内容类型:', contentType);
+
+                        // 🔥 确保WebSocket已连接
+                        if (!this.socket || !this.socket.connected) {
+                            console.log('⚠️ WebSocket未连接,重新初始化...');
+                            this.initWebSocket();
+                            // 等待连接建立
+                            await new Promise(resolve => {
+                                if (this.socket.connected) {
+                                    resolve();
+                                } else {
+                                    this.socket.once('connect', resolve);
+                                }
+                            });
+                            console.log('✅ WebSocket连接已建立');
+                        }
+
+                        // 🆕 提前生成临时任务ID并创建任务对象
+                        const tempTaskGroupId = `跟圈_${Date.now()}`;
+                        const taskObj = {
+                            taskGroupId: tempTaskGroupId,
+                            logs: ['⏳ 正在创建任务...'],
+                            startTime: new Date().toLocaleTimeString('zh-CN'),
+                            status: 'running',
+                            followCount: this.autoForm.script4.followCount,
+                            intervalMinutes: this.autoForm.script4.intervalMinutes,
+                            delayStartMinutes: this.autoForm.script4.delayStartMinutes || 0
+                        };
+                        this.autoForm.script4RunningTasks.push(taskObj);
+                        this.autoForm.script4Loading = true;
+                        console.log('📋 预创建任务对象,临时ID:', tempTaskGroupId);
+
+                        // 发送POST请求创建任务
+                        const response = await fetch('https://autochat.lfdhk.com/api/automation/script4/follow-circle', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                userId: this.userId,
+                                content: this.autoForm.script4.content,
+                                images: this.autoForm.script4.images,
+                                contentType: contentType,
+                                followCount: this.autoForm.script4.followCount,
+                                intervalMinutes: this.autoForm.script4.intervalMinutes,
+                                randomDelayMinutes: this.autoForm.script4.randomDelayMinutes || 0,
+                                delayStartMinutes: this.autoForm.script4.delayStartMinutes || 0,
+                                tempTaskGroupId: tempTaskGroupId // 🆕 传递临时ID给后端
+                            })
+                        });
+
+                        const result = await response.json();
+                        this.autoForm.script4Result = result;
+
+                        if (result.success && result.taskGroupId) {
+                            // 🆕 更新任务对象的真实ID
+                            taskObj.taskGroupId = result.taskGroupId;
+                            taskObj.logs.push('✅ 任务创建成功,开始执行...');
+                            console.log('✅ 任务创建成功,真实ID:', result.taskGroupId);
+                            console.log('📊 当前运行任务数:', this.autoForm.script4RunningTasks.length);
+                        } else {
+                            // 失败时移除任务对象
+                            const index = this.autoForm.script4RunningTasks.findIndex(t => t.taskGroupId === tempTaskGroupId);
+                            if (index > -1) {
+                                this.autoForm.script4RunningTasks.splice(index, 1);
+                            }
+                            if (this.autoForm.script4RunningTasks.length === 0) {
+                                this.autoForm.script4Loading = false;
+                            }
+                            console.error('❌ 脚本4执行失败:', result.message);
+                        }
+                    } catch (error) {
+                        console.error('❌ 脚本4执行异常:', error);
+                        this.autoForm.script4Result = {
+                            success: false,
+                            message: '执行失败: ' + error.message
+                        };
+                    }
+                },
+
+                // 🆕 停止单个任务
+                async stopSingleTask(taskGroupId) {
+                    if (!confirm(`确定要停止任务 ${taskGroupId} 吗?\n\n这将删除所有未执行的任务,已发布的朋友圈将保留。`)) {
+                        return;
+                    }
+
+                    try {
+                        console.log('🛑 停止跟圈任务:', taskGroupId);
+
+                        const response = await fetch('https://autochat.lfdhk.com/api/automation/script4/stop', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                taskGroupId: taskGroupId
+                            })
+                        });
+
+                        const result = await response.json();
+
+                        if (result.success) {
+                            // 更新任务状态
+                            const task = this.autoForm.script4RunningTasks.find(t => t.taskGroupId === taskGroupId);
+                            if (task) {
+                                task.status = 'stopped';
+                                task.logs.push('🛑 任务已手动停止');
+
+                                // 3秒后从列表中移除
+                                setTimeout(() => {
+                                    const index = this.autoForm.script4RunningTasks.findIndex(t => t.taskGroupId === taskGroupId);
+                                    if (index > -1) {
+                                        this.autoForm.script4RunningTasks.splice(index, 1);
+
+                                        // 如果没有任务在执行了,更新loading状态
+                                        if (this.autoForm.script4RunningTasks.length === 0) {
+                                            this.autoForm.script4Loading = false;
+                                        }
+                                    }
+                                }, 3000);
+                            }
+
+                            alert('✅ 任务已停止!');
+                        } else {
+                            alert('❌ 停止失败: ' + result.message);
+                        }
+                    } catch (error) {
+                        console.error('❌ 停止任务异常:', error);
+                        alert('停止失败: ' + error.message);
+                    }
+                },
+
+                // 停止脚本4跟圈任务 (停止所有任务)
+                async stopScript4() {
+                    if (this.autoForm.script4RunningTasks.length === 0) {
+                        alert('没有正在执行的跟圈任务!');
+                        return;
+                    }
+
+                    if (!confirm(`确定要停止所有跟圈任务吗? (共${this.autoForm.script4RunningTasks.length}个)\n\n这将删除所有未执行的任务,已发布的朋友圈将保留。`)) {
+                        return;
+                    }
+
+                    try {
+                        // 停止所有任务
+                        for (const task of this.autoForm.script4RunningTasks) {
+                            console.log('🛑 停止跟圈任务:', task.taskGroupId);
+
+                            const response = await fetch('https://autochat.lfdhk.com/api/automation/script4/stop', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({
+                                    taskGroupId: task.taskGroupId
+                                })
+                            });
+
+                            const result = await response.json();
+
+                            if (result.success) {
+                                task.status = 'stopped';
+                                task.logs.push('🛑 任务已停止');
+                            }
+                        }
+
+                        // 清空所有任务
+                        this.autoForm.script4RunningTasks = [];
+                        this.autoForm.script4Loading = false;
+
+                        alert('✅ 所有跟圈任务已停止!');
+                    } catch (error) {
+                        alert('❌ 停止失败: ' + error.message);
+                        console.error('❌ 停止异常:', error);
+                    }
+                },
+
+                // 处理脚本4图片上传
+                handleScript4ImageUpload(event) {
+                    const files = event.target.files;
+                    if (!files || files.length === 0) return;
+
+                    // 检查图片数量
+                    if (this.autoForm.script4.images.length + files.length > 9) {
+                        alert('最多只能上传9张图片!');
+                        return;
+                    }
+
+                    // 读取图片并转换为Base64 (自动压缩)
+                    Array.from(files).forEach(file => {
+                        // 检查文件大小 (15MB)
+                        if (file.size > 15 * 1024 * 1024) {
+                            alert(`图片 ${file.name} 超过15MB,请压缩后上传!`);
+                            return;
+                        }
+
+                        // 直接读取原图,不压缩
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            this.autoForm.script4.images.push(e.target.result);
+                            console.log(`✅ 图片已添加: ${file.name}, 大小: ${(file.size / 1024 / 1024).toFixed(2)}MB`);
+                        };
+                        reader.readAsDataURL(file);
+                    });
+
+                    // 清空input,允许重复选择同一文件
+                    event.target.value = '';
+                },
+
+                // 删除脚本4图片
+                removeScript4Image(index) {
+                    this.autoForm.script4.images.splice(index, 1);
+                },
+
+                saveCozeConfig() {
+                    // TODO: 调用后端API保存配置
+                    alert('Coze配置保存成功！');
+                },
+                saveFeishuConfig() {
+                    // TODO: 调用后端API保存配置
+                    alert('飞书配置保存成功！');
+                },
+                // 公众号监控相关方法
+                async searchWechatAccount() {
+                    if (!this.wechatMonitor.searchKeyword) {
+                        alert('请输入公众号名称');
+                        return;
+                    }
+
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch(`https://autochat.lfdhk.com/api/wechat-monitor/search?keyword=${encodeURIComponent(this.wechatMonitor.searchKeyword)}`, {
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.wechatMonitor.searchResults = data;
+                            if (data.length === 0) {
+                                alert('未找到相关公众号');
+                            }
+                        } else {
+                            alert('搜索失败！');
+                        }
+                    } catch (error) {
+                        console.error('搜索失败:', error);
+                        alert('搜索失败！');
+                    }
+                },
+                async selectAccount(account) {
+                    if (!confirm(`确定要订阅"${account.mp_name}"吗？`)) {
+                        return;
+                    }
+
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch('https://autochat.lfdhk.com/api/wechat-monitor/subscriptions', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${token}`
+                            },
+                            body: JSON.stringify({
+                                mp_name: account.mp_name,
+                                mp_id: account.mp_id,
+                                mp_cover: account.mp_cover,
+                                avatar: account.avatar,
+                                mp_intro: account.mp_intro
+                            })
+                        });
+
+                        if (response.ok) {
+                            alert('添加订阅成功！');
+                            this.wechatMonitor.searchKeyword = '';
+                            this.wechatMonitor.searchResults = [];
+                            this.loadSubscriptions();
+                        } else {
+                            alert('添加订阅失败！');
+                        }
+                    } catch (error) {
+                        console.error('添加订阅失败:', error);
+                        alert('添加订阅失败！');
+                    }
+                },
+                async loadSubscriptions() {
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch('https://autochat.lfdhk.com/api/wechat-monitor/subscriptions', {
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.wechatMonitor.subscriptions = data;
+                        }
+                    } catch (error) {
+                        console.error('加载订阅列表失败:', error);
+                    }
+                },
+                async deleteSubscription(id) {
+                    if (!confirm('确定要删除这个订阅吗？')) {
+                        return;
+                    }
+
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch(`https://autochat.lfdhk.com/api/wechat-monitor/subscriptions/${id}`, {
+                            method: 'DELETE',
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+
+                        if (response.ok) {
+                            alert('删除成功！');
+                            this.loadSubscriptions();
+                        } else {
+                            alert('删除失败！');
+                        }
+                    } catch (error) {
+                        console.error('删除订阅失败:', error);
+                        alert('删除失败！');
+                    }
+                },
+                async triggerUpdate(id) {
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch(`https://autochat.lfdhk.com/api/wechat-monitor/subscriptions/${id}/update`, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+
+                        if (response.ok) {
+                            alert('更新成功！');
+                            this.loadSubscriptions();
+                        } else {
+                            alert('更新失败！');
+                        }
+                    } catch (error) {
+                        console.error('触发更新失败:', error);
+                        alert('更新失败！');
+                    }
+                },
+                async loadArticles() {
+                    try {
+                        const token = localStorage.getItem('token');
+                        const response = await fetch('https://autochat.lfdhk.com/api/wechat-monitor/articles', {
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.wechatMonitor.articles = data;
+                        }
+                    } catch (error) {
+                        console.error('加载文章列表失败:', error);
+                    }
+                },
+                viewArticle(id) {
+                    alert(`查看文章详情: ${id}`);
+                },
+                openWechatMonitor() {
+                    // 跳转到新的公众号监控页面
+                    window.location.href = 'wechat-subscription.html';
+                },
+                openArticles() {
+                    // 跳转到文章管理页面
+                    window.location.href = 'articles.html';
+                },
+                openMonitorConfig() {
+                    // 跳转到监控配置页面
+                    window.location.href = 'monitor-config.html';
+                },
+                // 处理来自iframe的消息
+                handleMessage(event) {
+                    // 安全检查:确保消息来自可信源
+                    // 在生产环境中应该检查event.origin
+
+                    if (event.data && event.data.action === 'goToRewrite') {
+                        // 从localStorage获取转写数据
+                        const rewriteData = JSON.parse(localStorage.getItem('rewriteData') || '{}');
+
+                        if (rewriteData.content) {
+                            // 填充转写表单
+                            this.rewriteForm.articleId = rewriteData.articleId;
+                            this.rewriteForm.original = rewriteData.content;
+                            this.rewriteForm.images = rewriteData.images || [];
+                            this.rewriteForm.selectedImages = [...(rewriteData.images || [])];  // 默认选中所有图片
+
+                            // 切换到转写页面
+                            this.currentPage = 'rewrite';
+                            this.menuGroups.manual = true;  // 展开手动模式菜单
+                        }
+                    }
+                },
+                // 删除图片
+                removeImage(index) {
+                    this.rewriteForm.selectedImages.splice(index, 1);
+                },
+                // 上移图片
+                moveImageUp(index) {
+                    if (index > 0) {
+                        const temp = this.rewriteForm.selectedImages[index];
+                        this.rewriteForm.selectedImages[index] = this.rewriteForm.selectedImages[index - 1];
+                        this.rewriteForm.selectedImages[index - 1] = temp;
+                    }
+                },
+                // 下移图片
+                moveImageDown(index) {
+                    if (index < this.rewriteForm.selectedImages.length - 1) {
+                        const temp = this.rewriteForm.selectedImages[index];
+                        this.rewriteForm.selectedImages[index] = this.rewriteForm.selectedImages[index + 1];
+                        this.rewriteForm.selectedImages[index + 1] = temp;
+                    }
+                },
+                // 显示添加图片菜单
+                showAddImageMenu() {
+                    const choice = confirm('点击"确定"上传本地图片\n点击"取消"输入图片URL');
+                    if (choice) {
+                        // 上传本地图片
+                        this.triggerImageUpload();
+                    } else {
+                        // 输入URL
+                        this.addImageUrl();
+                    }
+                },
+                // 触发文件上传
+                triggerImageUpload() {
+                    this.$refs.imageUpload.click();
+                },
+                // 处理图片上传
+                handleImageUpload(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    // 检查文件类型
+                    if (!file.type.startsWith('image/')) {
+                        alert('请选择图片文件!');
+                        return;
+                    }
+
+                    // 检查文件大小(限制5MB)
+                    if (file.size > 5 * 1024 * 1024) {
+                        alert('图片大小不能超过5MB!');
+                        return;
+                    }
+
+                    // 使用FileReader读取图片并转换为Base64
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        // 添加Base64图片到列表
+                        this.rewriteForm.selectedImages.push(e.target.result);
+                    };
+                    reader.onerror = () => {
+                        alert('图片读取失败,请重试!');
+                    };
+                    reader.readAsDataURL(file);
+
+                    // 清空input,允许重复选择同一文件
+                    event.target.value = '';
+                },
+                // 添加图片URL(保留此方法,可以通过其他方式调用)
+                addImageUrl() {
+                    const url = prompt('请输入图片URL:');
+                    if (url && url.trim()) {
+                        this.rewriteForm.selectedImages.push(url.trim());
+                    }
+                },
+
+                // ========== 堆雪球账号管理方法 ==========
+
+                // 加载堆雪球账号列表
+                async loadDuixueqiuAccounts() {
+                    this.duixueqiuAccountsLoading = true;
+                    try {
+                        // 🔥 使用当前登录用户的真实ID
+                        const response = await fetch(`https://autochat.lfdhk.com/api/duixueqiu-accounts?userId=${this.userId}`);
+                        const result = await response.json();
+
+                        if (result.success) {
+                            this.duixueqiuAccounts = result.data;
+                        } else {
+                            alert('加载堆雪球账号失败: ' + result.message);
+                        }
+                    } catch (error) {
+                        console.error('加载堆雪球账号失败:', error);
+                        alert('加载堆雪球账号失败: ' + error.message);
+                    } finally {
+                        this.duixueqiuAccountsLoading = false;
+                    }
+                },
+
+                // 显示添加账号表单
+                showAddDuixueqiuAccountForm() {
+                    this.duixueqiuAccountForm = {
+                        id: null,
+                        username: '',
+                        password: ''
+                    };
+                    this.duixueqiuAccountFormVisible = true;
+                },
+
+                // 显示编辑账号表单
+                showEditDuixueqiuAccountForm(account) {
+                    this.duixueqiuAccountForm = {
+                        id: account.id,
+                        username: account.username,
+                        password: '' // 密码不回显,需要重新输入
+                    };
+                    this.duixueqiuAccountFormVisible = true;
+                },
+
+                // 保存堆雪球账号
+                async saveDuixueqiuAccount() {
+                    if (!this.duixueqiuAccountForm.username) {
+                        alert('请输入堆雪球用户名');
+                        return;
+                    }
+
+                    if (!this.duixueqiuAccountForm.password) {
+                        alert('请输入堆雪球密码');
+                        return;
+                    }
+
+                    this.duixueqiuAccountFormLoading = true;
+                    try {
+                        const isEdit = !!this.duixueqiuAccountForm.id;
+                        const url = isEdit
+                            ? `https://autochat.lfdhk.com/api/duixueqiu-accounts/${this.duixueqiuAccountForm.id}`
+                            : 'https://autochat.lfdhk.com/api/duixueqiu-accounts';
+                        const method = isEdit ? 'PUT' : 'POST';
+
+                        const response = await fetch(url, {
+                            method: method,
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                userId: this.userId, // 🔥 使用当前登录用户的真实ID
+                                username: this.duixueqiuAccountForm.username,
+                                password: this.duixueqiuAccountForm.password
+                            })
+                        });
+
+                        const result = await response.json();
+
+                        if (result.success) {
+                            alert(result.message);
+                            this.duixueqiuAccountFormVisible = false;
+                            await this.loadDuixueqiuAccounts(); // 重新加载列表
+                        } else {
+                            alert('保存失败: ' + result.message);
+                        }
+                    } catch (error) {
+                        console.error('保存堆雪球账号失败:', error);
+                        alert('保存失败: ' + error.message);
+                    } finally {
+                        this.duixueqiuAccountFormLoading = false;
+                    }
+                },
+
+                // 删除堆雪球账号
+                async deleteDuixueqiuAccount(accountId) {
+                    if (!confirm('确定要删除这个堆雪球账号吗?')) {
+                        return;
+                    }
+
+                    try {
+                        // 🔥 使用当前登录用户的真实ID
+                        const response = await fetch(`https://autochat.lfdhk.com/api/duixueqiu-accounts/${accountId}?userId=${this.userId}`, {
+                            method: 'DELETE'
+                        });
+
+                        const result = await response.json();
+
+                        if (result.success) {
+                            alert('删除成功');
+                            await this.loadDuixueqiuAccounts(); // 重新加载列表
+                        } else {
+                            alert('删除失败: ' + result.message);
+                        }
+                    } catch (error) {
+                        console.error('删除堆雪球账号失败:', error);
+                        alert('删除失败: ' + error.message);
+                    }
+                },
+
+                // 格式化日期
+                formatDate(dateString) {
+                    if (!dateString) return '-';
+                    const date = new Date(dateString);
+                    return date.toLocaleString('zh-CN', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                },
+
+                // 🔥 初始化WebSocket连接
+                initWebSocket() {
+                    if (this.socket) {
+                        console.log('⚠️ WebSocket已存在,跳过初始化');
+                        return;
+                    }
+
+                    console.log('📡 初始化WebSocket连接...');
+                    this.socket = io('https://autochat.lfdhk.com/automation', {
+                        path: '/socket.io',
+                        transports: ['websocket', 'polling']
+                    });
+
+                    // 监听连接成功
+                    this.socket.on('connect', () => {
+                        console.log('✅ WebSocket连接成功, ID:', this.socket.id);
+                    });
+
+                    // 监听连接错误
+                    this.socket.on('connect_error', (error) => {
+                        console.error('❌ WebSocket连接失败:', error);
+                    });
+
+                    // 监听跟圈日志
+                    this.socket.on('followCircleLog', (data) => {
+                        console.log('📨 收到日志:', data);
+
+                        // 🆕 找到对应的任务并添加日志
+                        const task = this.autoForm.script4RunningTasks.find(t => t.taskGroupId === data.taskGroupId);
+                        if (task) {
+                            task.logs.push(data.log);
+
+                            // 自动滚动到底部
+                            this.$nextTick(() => {
+                                const logContainer = document.getElementById(`task-logs-${data.taskGroupId}`);
+                                if (logContainer) {
+                                    logContainer.scrollTop = logContainer.scrollHeight;
+                                }
+                            });
+                        } else {
+                            console.warn('⚠️ 未找到任务:', data.taskGroupId);
+                        }
+                    });
+
+                    // 监听任务完成
+                    this.socket.on('followCircleComplete', (data) => {
+                        console.log('🎉 任务完成:', data);
+
+                        // 🆕 找到对应任务并更新状态
+                        const task = this.autoForm.script4RunningTasks.find(t => t.taskGroupId === data.taskGroupId);
+                        if (task) {
+                            task.status = data.success ? 'completed' : 'failed';
+                            task.logs.push(data.success ? '✅ 任务全部完成!' : `❌ 任务失败: ${data.message}`);
+
+                            // 3秒后从列表中移除
+                            setTimeout(() => {
+                                const index = this.autoForm.script4RunningTasks.findIndex(t => t.taskGroupId === data.taskGroupId);
+                                if (index > -1) {
+                                    this.autoForm.script4RunningTasks.splice(index, 1);
+                                    console.log('📊 移除任务组:', data.taskGroupId);
+                                    console.log('📊 剩余运行任务数:', this.autoForm.script4RunningTasks.length);
+
+                                    // 如果没有任务在执行了,更新loading状态
+                                    if (this.autoForm.script4RunningTasks.length === 0) {
+                                        this.autoForm.script4Loading = false;
+                                    }
+                                }
+                            }, 3000);
+                        }
+                    });
+
+                    // 🔥 监听脚本1日志
+                    this.socket.on('script1Log', (data) => {
+                        console.log('📨 收到脚本1日志:', data);
+
+                        // 🆕 找到对应的任务并添加日志
+                        const task = this.autoForm.script1RunningTasks.find(t => t.taskId === data.taskId);
+                        if (task) {
+                            task.logs.push(data.log);
+
+                            // 自动滚动到底部
+                            this.$nextTick(() => {
+                                const logContainer = document.getElementById(`task-logs-${data.taskId}`);
+                                if (logContainer) {
+                                    logContainer.scrollTop = logContainer.scrollHeight;
+                                }
+                            });
+                        } else {
+                            console.warn('⚠️ 未找到任务:', data.taskId);
+                        }
+                    });
+
+                    // 🆕 监听队列状态更新
+                    this.socket.on('queueStatus', (data) => {
+                        console.log('📊 队列状态更新:', data);
+
+                        // 更新Script 1任务的队列状态
+                        const script1Task = this.autoForm.script1RunningTasks.find(t => t.taskId === data.taskId);
+                        if (script1Task) {
+                            script1Task.queueStatus = data.status; // 'queued' or 'executing'
+                            script1Task.queuePosition = data.position;
+
+                            if (data.status === 'queued') {
+                                script1Task.logs.push(`⏳ 排队中,前面还有${data.position}个任务`);
+                            } else if (data.status === 'executing') {
+                                script1Task.logs.push(`▶️ 开始执行任务`);
+                            }
+                        }
+
+                        // 更新Script 4任务的队列状态
+                        const script4Task = this.autoForm.script4RunningTasks.find(t => t.taskGroupId === data.taskId);
+                        if (script4Task) {
+                            script4Task.queueStatus = data.status;
+                            script4Task.queuePosition = data.position;
+
+                            if (data.status === 'queued') {
+                                script4Task.logs.push(`⏳ 排队中,前面还有${data.position}个任务`);
+                            } else if (data.status === 'executing') {
+                                script4Task.logs.push(`▶️ 开始执行任务`);
+                            }
+                        }
+                    });
+
+                    // 🔥 监听脚本1任务完成
+                    this.socket.on('script1Complete', (data) => {
+                        console.log('🎉 脚本1任务完成:', data);
+
+                        // 🆕 找到对应任务并更新状态
+                        const task = this.autoForm.script1RunningTasks.find(t => t.taskId === data.taskId);
+                        if (task) {
+                            task.status = data.success ? 'completed' : 'failed';
+                            task.logs.push(data.success ? '✅ 任务全部完成!' : `❌ 任务失败: ${data.message}`);
+
+                            // 3秒后从列表中移除
+                            setTimeout(() => {
+                                const index = this.autoForm.script1RunningTasks.findIndex(t => t.taskId === data.taskId);
+                                if (index > -1) {
+                                    this.autoForm.script1RunningTasks.splice(index, 1);
+                                    console.log('📊 移除任务:', data.taskId);
+                                    console.log('📊 剩余运行任务数:', this.autoForm.script1RunningTasks.length);
+
+                                    // 如果没有任务在执行了,更新loading状态
+                                    if (this.autoForm.script1RunningTasks.length === 0) {
+                                        this.autoForm.script1Loading = false;
+                                    }
+                                }
+                            }, 3000);
+                        }
+                    });
+                }
+            },
+            mounted() {
+                // 检查登录状态
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    // 未登录,跳转到登录页面
+                    window.location.href = 'login.html';
+                    return;
+                }
+
+                // 获取用户信息
+                const user = JSON.parse(localStorage.getItem('user') || '{}');
+                if (user.name) {
+                    this.userName = user.name;
+                    this.userAvatar = user.name.charAt(0);
+                }
+                if (user.id) {
+                    this.userId = user.id;
+                }
+
+                // 🔥 立即建立WebSocket连接
+                this.initWebSocket();
+
+                // 加载公众号监控数据
+                this.loadSubscriptions();
+                this.loadArticles();
+
+                // 加载发布任务列表
+                this.loadPublishTasks();
+
+                // 加载堆雪球账号列表
+                this.loadDuixueqiuAccounts();
+
+                // 监听来自iframe的消息
+                window.addEventListener('message', this.handleMessage);
+            },
+            beforeUnmount() {
+                // 移除消息监听器
+                window.removeEventListener('message', this.handleMessage);
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
+
