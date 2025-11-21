@@ -191,17 +191,21 @@ export class WechatMonitorController {
   ) {
     this.logger.log(`手动触发更新公众号: ${id}, 爬取页数: ${pages}`);
 
-    // 查询数据库获取standard_mp_id
+    // 查询数据库获取standard_mp_id和user_id
     const { data: subscription } = await this.supabaseService
       .getClient()
       .from('wechat_subscriptions')
-      .select('standard_mp_id, mp_name')
+      .select('standard_mp_id, mp_name, user_id')
       .eq('mp_id', id)
       .single();
 
     const mpIdToUse = subscription?.standard_mp_id || id;
+    const mpName = subscription?.mp_name || '未知公众号';
+    const userId = subscription?.user_id;
+
     this.logger.log(`使用mp_id: ${mpIdToUse} (原始: ${id})`);
 
+    // 1. 触发we-mp-rss更新
     const result = await this.weMpRssService.updateMpArticles(mpIdToUse, 0, pages);
 
     // 如果返回的code不是0,说明有错误,抛出HttpException
@@ -210,7 +214,29 @@ export class WechatMonitorController {
       throw new HttpException(result, HttpStatus.BAD_REQUEST);
     }
 
-    return result;
+    // 2. 等待2秒,确保we-mp-rss更新完成
+    this.logger.log(`⏳ 等待we-mp-rss更新完成...`);
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // 3. 立即同步这个公众号的文章到数据库
+    this.logger.log(`🔄 开始同步文章到数据库: ${mpName}`);
+    try {
+      const syncResult = await this.wechatMonitorService.syncSingleAccount(mpIdToUse, mpName, userId);
+      this.logger.log(`✅ 同步完成,新增 ${syncResult.synced} 篇文章`);
+
+      return {
+        code: 0,
+        message: 'success',
+        data: {
+          updated: true,
+          synced: syncResult.synced,
+        },
+      };
+    } catch (error) {
+      this.logger.error(`❌ 同步文章失败: ${error.message}`);
+      // 即使同步失败,也返回更新成功(因为we-mp-rss更新成功了)
+      return result;
+    }
   }
 
   /**

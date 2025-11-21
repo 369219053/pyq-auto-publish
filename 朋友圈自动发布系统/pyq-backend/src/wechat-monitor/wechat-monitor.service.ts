@@ -427,6 +427,104 @@ export class WechatMonitorService {
   }
 
   /**
+   * 同步单个公众号的文章
+   * @param mpId 公众号ID
+   * @param mpName 公众号名称
+   * @param userId 用户ID
+   */
+  async syncSingleAccount(mpId: string, mpName: string, userId: string) {
+    this.logger.log(`🔄 开始同步单个公众号: ${mpName} (ID: ${mpId})`);
+
+    let totalSynced = 0;
+
+    try {
+      // 获取该公众号的所有文章(分页获取)
+      let page = 0;
+      const pageSize = 50; // 每页50篇
+      let hasMore = true;
+
+      while (hasMore) {
+        const response = await this.weMpRssService.getArticles(mpId, page, pageSize);
+
+        if (!response.data || !response.data.list || response.data.list.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        const articles = response.data.list;
+        const total = response.data.total || 0;
+
+        this.logger.log(`${mpName} - 第${page + 1}页: 获取 ${articles.length} 篇文章,总数: ${total}`);
+
+        // 同步文章
+        let synced = 0;
+        for (const article of articles) {
+          try {
+            // 检查文章是否已存在
+            const existingArticle = await this.articlesService.findByUrl(article.url);
+
+            if (existingArticle) {
+              this.logger.log(`⏭️  跳过已存在文章: ${article.title} (发布时间: ${new Date(article.publish_time * 1000).toISOString()})`);
+              continue;
+            }
+
+            // 获取文章详情
+            this.logger.log(`获取文章详情: ${article.title}`);
+            const detailResponse = await this.weMpRssService.getArticleDetail(article.id);
+
+            if (!detailResponse || !detailResponse.data) {
+              this.logger.error(`获取文章详情失败: ${article.title}`);
+              continue;
+            }
+
+            const fullArticle = detailResponse.data;
+            const images = this.extractImages(fullArticle.content || article.content);
+            const publishDate = new Date(article.publish_time * 1000).toISOString();
+
+            // 保存新文章
+            await this.articlesService.createArticle({
+              title: fullArticle.title || article.title,
+              content: fullArticle.content || article.content,
+              images: images,
+              publish_time: publishDate,
+              author: fullArticle.author || article.author,
+              url: fullArticle.url || article.url,
+              account_name: mpName,
+              account_id: mpId,
+              user_id: userId,
+            });
+
+            synced++;
+            totalSynced++;
+            this.logger.log(`同步新文章: ${article.title}`);
+          } catch (error) {
+            this.logger.error(`同步文章失败: ${article.title}, ${error.message}`);
+          }
+        }
+
+        this.logger.log(`${mpName} - 第${page + 1}页同步完成,新增 ${synced} 篇`);
+
+        // 如果本页文章数少于pageSize,说明已经是最后一页
+        if (articles.length < pageSize) {
+          hasMore = false;
+        } else {
+          page++;
+        }
+      }
+
+      this.logger.log(`${mpName} 同步完成,共新增 ${totalSynced} 篇文章`);
+
+      return {
+        success: true,
+        synced: totalSynced,
+      };
+    } catch (error) {
+      this.logger.error(`同步公众号失败: ${mpName}, ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
    * 定时同步文章 - 方案三:定时自动同步
    * 根据订阅列表,同步每个订阅的所有文章
    */
@@ -506,6 +604,7 @@ export class WechatMonitorService {
                 const existingArticle = await this.articlesService.findByUrl(article.url);
 
                 if (existingArticle) {
+                  this.logger.log(`⏭️  跳过已存在文章: ${article.title} (发布时间: ${new Date(article.publish_time * 1000).toISOString()})`);
                   continue; // 已存在,跳过
                 }
 
