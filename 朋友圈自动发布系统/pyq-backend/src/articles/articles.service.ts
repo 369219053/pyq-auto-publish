@@ -281,18 +281,21 @@ export class ArticlesService {
     try {
       const supabase = this.supabaseService.getClient();
 
+      // 🔧 修复: 使用limit(1)代替maybeSingle(),避免重复记录报错
       const { data, error } = await supabase
         .from('wechat_articles')
         .select('*')
         .eq('url', url)
-        .maybeSingle();
+        .order('created_at', { ascending: false }) // 优先返回最新的记录
+        .limit(1);
 
       if (error) {
         this.logger.error(`查找文章失败: ${error.message}`);
         throw error;
       }
 
-      return data;
+      // 返回第一条记录(如果存在)
+      return data && data.length > 0 ? data[0] : null;
     } catch (error) {
       this.logger.error(`查找文章失败: ${error.message}`);
       throw error;

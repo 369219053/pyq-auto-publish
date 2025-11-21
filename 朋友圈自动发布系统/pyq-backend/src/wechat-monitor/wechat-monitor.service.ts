@@ -468,6 +468,18 @@ export class WechatMonitorService {
 
           this.logger.log(`开始同步公众号: ${mpName} (ID: ${mpId}) for 用户: ${userId}`);
 
+          // 🔄 关键修复: 先触发we-mp-rss更新,获取最新文章
+          try {
+            this.logger.log(`🔄 触发we-mp-rss更新: ${mpName}`);
+            await this.weMpRssService.triggerUpdate(mpId);
+            this.logger.log(`✅ we-mp-rss更新完成: ${mpName}`);
+
+            // 等待1秒,确保we-mp-rss完成更新
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } catch (updateError) {
+            this.logger.warn(`⚠️  触发更新失败,继续同步: ${updateError.message}`);
+          }
+
           // 获取该公众号的所有文章(分页获取)
           let page = 0;
           const pageSize = 50; // 每页50篇
