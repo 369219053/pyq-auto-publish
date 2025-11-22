@@ -128,6 +128,481 @@ we-mp-rss定时检查公众号(每1小时)
 
 ---
 
+## 🔄 实时监控实现原理
+
+### 核心问题: we-mp-rss的缓存机制
+
+**重要发现**: we-mp-rss服务**不会自动更新**文章缓存!
+
+#### 问题表现
+
+1. **定时任务只检查缓存** - we-mp-rss的定时任务只是定期检查公众号,但检查结果会缓存起来
+2. **API返回缓存数据** - 调用`/api/v1/wx/articles`接口返回的是缓存的文章列表
+3. **新文章不显示** - 即使公众号发布了新文章,API返回的还是旧的缓存数据
+
+#### 实际案例
+
+**问题场景**:
+- 公众号"沪港纪老板"在11/19和11/20发布了新文章
+- 系统定时任务每小时运行,调用`getArticles()`获取文章
+- 但返回的文章总数一直是74篇,没有变化
+- 新文章无法同步到系统中
+
+**根本原因**:
+- we-mp-rss的文章列表是**缓存数据**
+- 需要**手动触发更新**才会刷新缓存
+- 触发更新的API: `/api/v1/wx/mps/update/{mpId}`
+
+---
+
+### 解决方案: 主动触发更新
+
+#### 方案架构
+
+```
+定时任务/手动同步
+  ↓
+1. 触发we-mp-rss更新
+   调用: /api/v1/wx/mps/update/{mpId}
+  ↓
+2. 等待更新完成 (1-2秒)
+  ↓
+3. 获取最新文章列表
+   调用: /api/v1/wx/articles?mp_id={mpId}
+  ↓
+4. 同步文章到数据库
+   - URL去重
+   - 保存新文章
+   - 生成AI摘要
+```
+
+---
+
+### 定时同步实现
+
+#### 核心代码
+
+**文件**: `pyq-backend/src/wechat-monitor/wechat-monitor.service.ts`
+
+**关键修改**: 在获取文章前先触发更新
+
+```typescript
+// 定时任务: 每小时同步一次
+@Cron('0 * * * *')
+async syncArticles() {
+  // 获取所有订阅的公众号
+  const subscriptions = await this.getSubscriptions();
+
+  for (const subscription of subscriptions) {
+    const mpId = subscription.mp_id;
+    const mpName = subscription.mp_name;
+
+    // 🔑 关键步骤1: 先触发we-mp-rss更新
+    try {
+      this.logger.log(`🔄 触发we-mp-rss更新: ${mpName}`);
+      await this.weMpRssService.triggerUpdate(mpId);
+      this.logger.log(`✅ we-mp-rss更新完成: ${mpName}`);
+
+      // 等待1秒,确保we-mp-rss完成更新
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    } catch (updateError) {
+      this.logger.warn(`⚠️  触发更新失败,继续同步: ${updateError.message}`);
+    }
+
+    // 🔑 关键步骤2: 获取最新文章列表
+    const articles = await this.weMpRssService.getArticles(mpId);
+
+    // 🔑 关键步骤3: 同步文章到数据库
+    for (const article of articles) {
+      // URL去重
+      const exists = await this.articlesService.findByUrl(article.url);
+      if (exists) {
+        this.logger.log(`⏭️  跳过已存在文章: ${article.title}`);
+        continue;
+      }
+
+      // 保存新文章
+      await this.articlesService.createArticle({
+        title: article.title,
+        content: article.content,
+        url: article.url,
+        account_name: mpName,
+        // ... 其他字段
+      });
+
+      this.logger.log(`✅ 同步新文章: ${article.title}`);
+    }
+  }
+}
+```
+
+#### 触发更新的实现
+
+**文件**: `pyq-backend/src/wechat-monitor/we-mp-rss.service.ts`
+
+```typescript
+/**
+ * 触发we-mp-rss更新公众号文章缓存
+ * @param mpId 公众号ID
+ */
+async triggerUpdate(mpId: string) {
+  try {
+    const headers = await this.getHeaders();
+
+    this.logger.log(`🔄 触发公众号更新: ${mpId}`);
+    const response = await this.axiosInstance.get(
+      `/api/v1/wx/mps/update/${mpId}`,
+      { headers }
+    );
+
+    this.logger.log(`✅ 成功触发更新: ${mpId}`);
+    return response.data;
+  } catch (error) {
+    this.logger.error(`❌ 触发更新失败: ${error.message}`);
+    throw error;
+  }
+}
+```
+
+---
+
+### 手动同步实现
+
+#### 用户操作流程
+
+1. 用户在前端点击"同步文章"按钮
+2. 前端调用后端API: `POST /api/wechat-monitor/subscriptions/:id/update`
+3. 后端执行同步流程
+4. 前端刷新文章列表,显示新文章
+
+#### 核心代码
+
+**文件**: `pyq-backend/src/wechat-monitor/wechat-monitor.controller.ts`
+
+```typescript
+/**
+ * 手动触发更新公众号文章
+ */
+@Post('subscriptions/:id/update')
+async triggerUpdate(
+  @Param('id') id: string,
+  @Query('pages') pages: number = 10,
+) {
+  this.logger.log(`手动触发更新公众号: ${id}`);
+
+  // 查询数据库获取公众号信息
+  const subscription = await this.getSubscription(id);
+  const mpId = subscription.standard_mp_id || id;
+  const mpName = subscription.mp_name;
+  const userId = subscription.user_id;
+
+  // 🔑 关键步骤1: 触发we-mp-rss更新
+  const result = await this.weMpRssService.updateMpArticles(mpId, 0, pages);
+
+  if (result.code !== 0) {
+    throw new HttpException(result, HttpStatus.BAD_REQUEST);
+  }
+
+  // 🔑 关键步骤2: 等待更新完成
+  this.logger.log(`⏳ 等待we-mp-rss更新完成...`);
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  // 🔑 关键步骤3: 立即同步文章到数据库
+  this.logger.log(`🔄 开始同步文章到数据库: ${mpName}`);
+  const syncResult = await this.wechatMonitorService.syncSingleAccount(
+    mpId,
+    mpName,
+    userId
+  );
+
+  this.logger.log(`✅ 同步完成,新增 ${syncResult.synced} 篇文章`);
+
+  return {
+    code: 0,
+    message: 'success',
+    data: {
+      updated: true,
+      synced: syncResult.synced,
+    },
+  };
+}
+```
+
+#### 单个公众号同步
+
+**文件**: `pyq-backend/src/wechat-monitor/wechat-monitor.service.ts`
+
+```typescript
+/**
+ * 同步单个公众号的文章
+ * @param mpId 公众号ID
+ * @param mpName 公众号名称
+ * @param userId 用户ID
+ */
+async syncSingleAccount(mpId: string, mpName: string, userId: string) {
+  this.logger.log(`🔄 开始同步单个公众号: ${mpName}`);
+
+  let totalSynced = 0;
+  let page = 0;
+  const pageSize = 50;
+  let hasMore = true;
+
+  while (hasMore) {
+    // 获取文章列表
+    const response = await this.weMpRssService.getArticles(mpId, page, pageSize);
+    const articles = response.data.list;
+
+    if (!articles || articles.length === 0) {
+      hasMore = false;
+      break;
+    }
+
+    // 同步文章
+    for (const article of articles) {
+      // URL去重
+      const existingArticle = await this.articlesService.findByUrl(article.url);
+
+      if (existingArticle) {
+        this.logger.log(`⏭️  跳过已存在文章: ${article.title}`);
+        continue;
+      }
+
+      // 保存新文章
+      await this.articlesService.createArticle({
+        title: article.title,
+        content: article.content,
+        url: article.url,
+        account_name: mpName,
+        account_id: mpId,
+        user_id: userId,
+        // ... 其他字段
+      });
+
+      totalSynced++;
+      this.logger.log(`✅ 同步新文章: ${article.title}`);
+    }
+
+    // 检查是否还有更多文章
+    if (articles.length < pageSize) {
+      hasMore = false;
+    } else {
+      page++;
+    }
+  }
+
+  this.logger.log(`✅ ${mpName} 同步完成,共新增 ${totalSynced} 篇文章`);
+
+  return {
+    success: true,
+    synced: totalSynced,
+  };
+}
+```
+
+---
+
+### URL去重机制
+
+#### 为什么需要去重?
+
+- 同一篇文章可能被多次同步
+- 避免数据库中出现重复记录
+- 提高同步效率
+
+#### 去重实现
+
+**文件**: `pyq-backend/src/articles/articles.service.ts`
+
+```typescript
+/**
+ * 根据URL查找文章(用于去重)
+ * @param url 文章URL
+ */
+async findByUrl(url: string) {
+  try {
+    const supabase = this.supabaseService.getClient();
+
+    // 使用limit(1)避免重复记录报错
+    const { data, error } = await supabase
+      .from('wechat_articles')
+      .select('*')
+      .eq('url', url)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (error) {
+      this.logger.error(`查找文章失败: ${error.message}`);
+      throw error;
+    }
+
+    // 返回第一条记录(如果存在)
+    return data && data.length > 0 ? data[0] : null;
+  } catch (error) {
+    this.logger.error(`查找文章失败: ${error.message}`);
+    throw error;
+  }
+}
+```
+
+**关键修复**:
+- 之前使用`.maybeSingle()`,当有重复记录时会报错
+- 现在使用`.limit(1)`,只返回第一条记录
+- 避免了"JSON object requested, multiple rows returned"错误
+
+---
+
+### 完整流程图
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     实时监控完整流程                          │
+└─────────────────────────────────────────────────────────────┘
+
+方式1: 定时同步 (每小时自动)
+  ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 1. 定时任务触发 (Cron: 0 * * * *)                            │
+│    - 获取所有订阅的公众号列表                                  │
+└─────────────────────────────────────────────────────────────┘
+  ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 2. 遍历每个公众号                                             │
+│    - 触发we-mp-rss更新: triggerUpdate(mpId)                  │
+│    - 等待1秒,确保更新完成                                     │
+└─────────────────────────────────────────────────────────────┘
+  ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 3. 获取最新文章列表                                           │
+│    - 调用: getArticles(mpId, page, pageSize)                │
+│    - 分页获取,每页50篇                                        │
+└─────────────────────────────────────────────────────────────┘
+  ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 4. 同步文章到数据库                                           │
+│    - 遍历文章列表                                             │
+│    - URL去重: findByUrl(article.url)                        │
+│    - 如果不存在,保存到数据库                                   │
+│    - 生成AI摘要(可选)                                         │
+└─────────────────────────────────────────────────────────────┘
+  ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 5. 记录日志                                                   │
+│    - 新增文章数量                                             │
+│    - 跳过的已存在文章                                         │
+└─────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════
+
+方式2: 手动同步 (用户点击按钮)
+  ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 1. 用户点击"同步文章"按钮                                      │
+│    - 前端调用: POST /api/wechat-monitor/subscriptions/:id/update │
+└─────────────────────────────────────────────────────────────┘
+  ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 2. 后端触发we-mp-rss更新                                      │
+│    - 调用: updateMpArticles(mpId, 0, pages)                 │
+│    - 等待2秒,确保更新完成                                     │
+└─────────────────────────────────────────────────────────────┘
+  ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 3. 立即同步文章到数据库                                        │
+│    - 调用: syncSingleAccount(mpId, mpName, userId)          │
+│    - 分页获取所有文章                                         │
+│    - URL去重并保存新文章                                      │
+└─────────────────────────────────────────────────────────────┘
+  ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 4. 返回同步结果                                               │
+│    - 新增文章数量                                             │
+│    - 前端刷新文章列表                                         │
+│    - 用户立即看到新文章                                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 关键时间节点
+
+| 操作 | 耗时 | 说明 |
+|------|------|------|
+| 触发we-mp-rss更新 | 0.5-1秒 | 调用API触发更新 |
+| 等待更新完成 | 1-2秒 | 确保we-mp-rss完成缓存刷新 |
+| 获取文章列表 | 0.5-1秒 | 每页50篇文章 |
+| URL去重查询 | 0.1秒/篇 | 数据库查询 |
+| 保存新文章 | 0.2秒/篇 | 数据库插入 |
+| **总耗时(手动同步)** | **3-5秒** | 假设有10篇新文章 |
+| **总耗时(定时同步)** | **5-10分钟** | 假设有5个公众号,每个10篇新文章 |
+
+---
+
+### 最佳实践
+
+#### 1. 定时同步间隔
+
+- **推荐**: 60分钟 (当前配置)
+- **最小**: 30分钟 (避免频繁触发)
+- **最大**: 120分钟 (避免错过新文章)
+
+#### 2. 手动同步使用场景
+
+- 添加新订阅后,立即同步历史文章
+- 发现新文章未同步时,手动触发
+- 测试同步功能是否正常
+
+#### 3. 错误处理
+
+- 触发更新失败时,继续同步(使用缓存数据)
+- URL去重失败时,跳过该文章
+- 保存文章失败时,记录日志并继续
+
+#### 4. 性能优化
+
+- 分页获取文章,避免一次性加载过多
+- 使用数据库索引加速URL去重查询
+- 异步处理AI摘要生成,不阻塞同步流程
+
+---
+
+### 监控和日志
+
+#### 关键日志示例
+
+**定时同步日志**:
+```
+[WechatMonitorService] 🔄 开始定时同步文章...
+[WechatMonitorService] 开始同步公众号: 沪港纪老板 (ID: MP_WXS_3928898756)
+[WechatMonitorService] 🔄 触发we-mp-rss更新: 沪港纪老板
+[WeMpRssService] 🔄 触发公众号更新: MP_WXS_3928898756
+[WeMpRssService] ✅ 成功触发更新: MP_WXS_3928898756
+[WechatMonitorService] ✅ we-mp-rss更新完成: 沪港纪老板
+[WeMpRssService] 📄 调用getArticles - mpId: MP_WXS_3928898756, page: 0
+[WeMpRssService] ✅ 获取文章成功,返回 50 篇文章,总数: 76
+[WechatMonitorService] 沪港纪老板 - 第1页: 获取 50 篇文章,总数: 76
+[WechatMonitorService] ⏭️  跳过已存在文章: 香港越来越像内地了吗？
+[WechatMonitorService] ✅ 同步新文章: 普通家庭如何做好资产配置?
+[WechatMonitorService] ✅ 同步新文章: 火爆!超6万人赶港买房!
+[WechatMonitorService] 沪港纪老板 - 第1页同步完成,新增 2 篇
+[WechatMonitorService] 沪港纪老板 同步完成,共新增 2 篇文章
+```
+
+**手动同步日志**:
+```
+[WechatMonitorController] 手动触发更新公众号: MP_WXS_3928898756
+[WeMpRssService] 🔄 触发公众号更新: MP_WXS_3928898756
+[WeMpRssService] ✅ 成功触发更新: MP_WXS_3928898756
+[WechatMonitorController] ⏳ 等待we-mp-rss更新完成...
+[WechatMonitorController] 🔄 开始同步文章到数据库: 沪港纪老板
+[WechatMonitorService] 🔄 开始同步单个公众号: 沪港纪老板
+[WechatMonitorService] ✅ 同步新文章: 普通家庭如何做好资产配置?
+[WechatMonitorService] ✅ 同步新文章: 火爆!超6万人赶港买房!
+[WechatMonitorService] ✅ 沪港纪老板 同步完成,共新增 2 篇文章
+[WechatMonitorController] ✅ 同步完成,新增 2 篇文章
+```
+
+---
+
 ## 🚀 部署步骤
 
 ### 第一步: 部署we-mp-rss服务
