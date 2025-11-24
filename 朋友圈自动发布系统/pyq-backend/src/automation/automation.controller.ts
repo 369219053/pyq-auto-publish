@@ -333,12 +333,16 @@ export class AutomationController {
       taskId?: string;
       forbiddenTimeRanges?: Array<{startTime: string, endTime: string}>;
       selectedWechatAccountIndexes?: number[];
+      selectedFriendIds?: string[]; // 新增: 选中的好友ID列表
     },
   ) {
     this.logger.log(`收到脚本2请求: 微信好友触达（组合发送）`);
     this.logger.log(`内容类型: ${body.contents.map(c => c.type).join(', ')}, 目标完成时间: ${body.targetDays}天`);
     if (body.selectedWechatAccountIndexes && body.selectedWechatAccountIndexes.length > 0) {
       this.logger.log(`选中微信号数量: ${body.selectedWechatAccountIndexes.length}个`);
+    }
+    if (body.selectedFriendIds && body.selectedFriendIds.length > 0) {
+      this.logger.log(`选中好友数量: ${body.selectedFriendIds.length}个`);
     }
     if (body.forbiddenTimeRanges && body.forbiddenTimeRanges.length > 0) {
       this.logger.log(`禁发时间段: ${body.forbiddenTimeRanges.map(r => `${r.startTime}-${r.endTime}`).join(', ')}`);
@@ -359,7 +363,8 @@ export class AutomationController {
         body.userId,
         taskId,
         body.forbiddenTimeRanges,
-        body.selectedWechatAccountIndexes
+        body.selectedWechatAccountIndexes,
+        body.selectedFriendIds // 传递选中的好友ID列表
       ).catch(error => {
         this.logger.error(`脚本2（组合发送）执行失败: ${error.message}`, error.stack);
       });
@@ -822,6 +827,42 @@ export class AutomationController {
         success: false,
         message: error.message || '获取失败',
         data: [],
+      };
+    }
+  }
+
+  /**
+   * 发送私聊消息给多个好友(使用搜索框,更快更准确)
+   */
+  @Post('send-private-messages')
+  async sendPrivateMessages(
+    @Body()
+    body: {
+      userId: string;
+      friendIds: string[]; // 选中的好友ID列表
+      messageType: 'text' | 'video' | 'link';
+      messageContent: string; // 文字内容或附加文案
+      materialId?: string; // 视频号或链接素材ID
+    },
+  ) {
+    this.logger.log(`收到发送私聊消息请求: ${body.friendIds.length} 个好友`);
+    this.logger.log(`消息类型: ${body.messageType}`);
+
+    try {
+      // 异步执行,立即返回
+      this.wechatReachService.sendPrivateMessages(body).catch((error) => {
+        this.logger.error(`发送私聊消息失败: ${error.message}`, error.stack);
+      });
+
+      return {
+        success: true,
+        message: '发送任务已启动',
+      };
+    } catch (error) {
+      this.logger.error(`启动发送任务失败: ${error.message}`, error.stack);
+      return {
+        success: false,
+        message: error.message || '启动失败',
       };
     }
   }

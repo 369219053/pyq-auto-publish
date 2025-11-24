@@ -291,44 +291,67 @@ export class WechatReachService {
     this.emitLog('📱 获取左侧微信号列表...');
 
     try {
-      // 等待微信号列表容器加载
-      await page.waitForSelector('.wechat-account-list', { timeout: 10000 });
-      this.emitLog('✅ 找到微信号列表容器');
+      // 等待微信号列表容器加载 - 使用5分钟超时
+      this.emitLog('⏳ 等待微信号列表容器出现 (最多300秒)...');
+      await page.waitForSelector('.wechat-account-list', { timeout: 300000 });
+      this.emitLog('✅ 微信号列表容器已出现');
 
-      // 等待列表内容加载
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // 等待微信号列表加载出来 - 使用循环等待机制
+      const maxWaitTime = 300000; // 300秒(5分钟)
+      const startTime = Date.now();
+      let listRendered = false;
+
+      this.emitLog('⏳ 开始等待微信号列表加载...');
+
+      while (!listRendered && (Date.now() - startTime) < maxWaitTime) {
+        const itemCount = await page.evaluate(() => {
+          const items = document.querySelectorAll('.wechat-account-list > .item');
+          return items.length;
+        });
+
+        // 检查是否有微信号列表项
+        if (itemCount > 0) {
+          listRendered = true;
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          this.emitLog(`✅ 微信号列表加载完成! 找到 ${itemCount} 个微信号 (耗时${elapsed}秒)`);
+        } else {
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          // 每10秒打印一次日志,避免日志过多
+          if (Math.floor(Date.now() - startTime) % 10000 < 2000) {
+            this.emitLog(`⏳ 微信号列表仍在加载... (已等待${elapsed}秒)`);
+          }
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+
+      if (!listRendered) {
+        this.emitLog('❌ 微信号列表加载超时(300秒),页面可能加载失败!');
+        throw new Error('微信号列表加载超时');
+      }
+
+      // 额外等待5秒,确保页面完全加载,loading遮罩消失
+      this.emitLog('⏳ 额外等待5秒,确保页面完全加载...');
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      this.emitLog('✅ 页面加载等待完成');
 
       // 从左侧列表中获取所有微信号
       this.emitLog('🔍 提取微信号列表...');
 
       const accounts = await page.evaluate(() => {
-        // 查找微信号列表容器
-        const container = document.querySelector('.wechat-account-list');
+        const items = document.querySelectorAll('.wechat-account-list > .item');
+        const result: Array<{ name: string; index: number }> = [];
 
-        if (!container) {
-          console.log('未找到.wechat-account-list容器');
-          return [];
-        }
-
-        // 查找所有微信号元素
-        const accountItems = container.querySelectorAll('.item');
-
-        console.log(`找到 ${accountItems.length} 个微信号`);
-
-        const accounts = Array.from(accountItems).map((item, index) => {
-          // 从title属性获取完整名称
-          const name = item.getAttribute('title') || '';
-
-          console.log(`微信号 ${index}: ${name}`);
-
-          return {
-            name: name,
-            index: index
-          };
+        items.forEach((item, index) => {
+          const nameDiv = item.querySelector('.name');
+          if (nameDiv) {
+            const name = nameDiv.textContent?.trim() || '';
+            if (name) {
+              result.push({ name, index });
+            }
+          }
         });
 
-        // 过滤掉空名称
-        return accounts.filter(item => item.name && item.name.length > 0);
+        return result;
       });
 
       this.emitLog(`✅ 找到 ${accounts.length} 个微信号`);
@@ -347,7 +370,7 @@ export class WechatReachService {
     } catch (error) {
       this.logger.error(`获取微信号列表失败: ${error.message}`);
       this.emitLog(`❌ 获取微信号列表失败: ${error.message}`);
-      return [];
+      throw error; // 抛出错误而不是返回空数组
     }
   }
 
@@ -500,13 +523,135 @@ export class WechatReachService {
   }
 
   /**
-   * 切换到指定微信号
+   * 切换到指定微信号(使用完整验证机制,确保切换成功)
    */
   private async switchWechatAccount(page: puppeteer.Page, accountName: string): Promise<void> {
     this.emitLog(`🔄 切换到微信号: ${accountName}`);
-    
-    await page.click(`[title="${accountName}"]`);
-    await new Promise(resolve => setTimeout(resolve, 2000)); // 等待切换完成
+
+    try {
+      // 先记录点击前的"未分组"数字
+      const beforeClickCount = await page.evaluate(() => {
+        const allSpans = document.querySelectorAll('span');
+        for (const span of allSpans) {
+          const text = span.textContent?.trim() || '';
+          const match = text.match(/^未分组[（(](\d+)个[）)]$/);
+          if (match) {
+            return parseInt(match[1], 10);
+          }
+        }
+        return 0;
+      });
+      this.emitLog(`📊 点击前的未分组好友数: ${beforeClickCount}`);
+
+      // 最多重试3次
+      let retryCount = 0;
+      const maxRetries = 3;
+      let clickSuccess = false;
+
+      while (!clickSuccess && retryCount < maxRetries) {
+        if (retryCount > 0) {
+          this.emitLog(`🔄 第 ${retryCount + 1} 次尝试点击微信号: ${accountName}`);
+        }
+
+        // 🔍 调试:打印所有微信号列表
+        const allAccounts = await page.evaluate(() => {
+          const items = document.querySelectorAll('.wechat-account-list > .item');
+          return Array.from(items).map((item, index) => {
+            const nameDiv = item.querySelector('.name');
+            const title = item.getAttribute('title');
+            const hasSelected = item.classList.contains('selected');
+            return {
+              index,
+              name: nameDiv?.textContent?.trim() || '',
+              title: title || '',
+              selected: hasSelected
+            };
+          });
+        });
+        this.emitLog(`🔍 找到 ${allAccounts.length} 个微信号:`);
+        allAccounts.forEach(acc => {
+          this.emitLog(`  [${acc.index}] name="${acc.name}", title="${acc.title}", selected=${acc.selected}`);
+        });
+
+        // 使用dispatchEvent模拟真实的鼠标点击事件
+        const clickResult = await page.evaluate((name) => {
+          const items = document.querySelectorAll('.wechat-account-list > .item');
+          for (const item of items) {
+            const nameDiv = item.querySelector('.name');
+            if (nameDiv && nameDiv.textContent?.trim() === name) {
+              // 模拟真实的鼠标点击事件
+              const clickEvent = new MouseEvent('click', {
+                view: window,
+                bubbles: true,
+                cancelable: true
+              });
+              item.dispatchEvent(clickEvent);
+              return {
+                success: true,
+                clickedElement: 'item',
+                title: item.getAttribute('title') || ''
+              };
+            }
+          }
+          return { success: false, clickedElement: '', title: '' };
+        }, accountName);
+
+        if (!clickResult.success) {
+          throw new Error(`未找到微信号: ${accountName}`);
+        }
+
+        this.emitLog(`✅ 已使用JavaScript点击微信号: ${accountName} (title: ${clickResult.title})`);
+
+        // 点击后等待3秒让页面响应
+        this.emitLog(`⏳ 等待3秒让页面响应点击事件...`);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        // 验证是否切换成功 - 检查好友数和选中状态
+        const afterClickCount = await page.evaluate(() => {
+          const allSpans = document.querySelectorAll('span');
+          for (const span of allSpans) {
+            const text = span.textContent?.trim() || '';
+            const match = text.match(/^未分组[（(](\d+)个[）)]$/);
+            if (match) {
+              return parseInt(match[1], 10);
+            }
+          }
+          return 0;
+        });
+
+        // 检查选中的微信号名称
+        const selectedAccountName = await page.evaluate(() => {
+          const selectedItem = document.querySelector('.wechat-account-list > .item.selected');
+          if (selectedItem) {
+            const nameDiv = selectedItem.querySelector('.name');
+            return nameDiv?.textContent?.trim() || '';
+          }
+          return '';
+        });
+
+        this.emitLog(`📊 点击后的未分组好友数: ${afterClickCount}`);
+        this.emitLog(`📊 当前选中的微信号: ${selectedAccountName}`);
+
+        // 验证切换是否成功
+        if (selectedAccountName === accountName && afterClickCount !== beforeClickCount) {
+          this.emitLog(`✅ 微信号切换成功: ${accountName}`);
+          clickSuccess = true;
+        } else {
+          this.emitLog(`⚠️ 微信号切换可能失败,重试...`);
+          retryCount++;
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      if (!clickSuccess) {
+        throw new Error(`切换微信号失败: ${accountName}`);
+      }
+
+    } catch (error) {
+      this.logger.error(`切换微信号失败: ${error.message}`);
+      this.emitLog(`❌ 切换微信号失败: ${error.message}`);
+      throw error;
+    }
   }
 
   /**
@@ -585,7 +730,72 @@ export class WechatReachService {
   }
 
   /**
-   * 通过滚动查找并点击指定好友
+   * 通过搜索框查找并点击指定好友(新方法 - 更快更准确)
+   */
+  private async searchAndClickFriend(page: puppeteer.Page, friendName: string): Promise<boolean> {
+    this.emitLog(`🔍 搜索好友: ${friendName}...`);
+
+    try {
+      // 1. 清空搜索框
+      await page.evaluate(() => {
+        const searchInput = document.querySelector('input[placeholder="昵称/备注/标签"]') as HTMLInputElement;
+        if (searchInput) {
+          searchInput.value = '';
+          // 触发input事件,清空搜索结果
+          searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      });
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      // 2. 输入好友昵称
+      const searchInput = await page.$('input[placeholder="昵称/备注/标签"]');
+      if (!searchInput) {
+        this.emitLog(`❌ 未找到搜索框`);
+        return false;
+      }
+
+      await searchInput.click();
+      await new Promise(resolve => setTimeout(resolve, 200));
+      await searchInput.type(friendName);
+      this.emitLog(`⌨️ 已输入搜索关键词: ${friendName}`);
+
+      // 3. 等待搜索结果
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // 4. 点击搜索结果中的好友
+      const clicked = await page.evaluate((name) => {
+        // 查找所有好友元素
+        const friendElements = document.querySelectorAll('.recent-and-friend-panel-concat-item__friend');
+
+        for (const el of friendElements) {
+          const text = el.textContent?.trim() || '';
+
+          // 精确匹配好友昵称
+          if (text === name || text.includes(name)) {
+            (el as HTMLElement).click();
+            return { success: true, clickedText: text };
+          }
+        }
+
+        return { success: false, clickedText: '' };
+      }, friendName);
+
+      if (clicked.success) {
+        this.emitLog(`✅ 找到并点击好友: ${clicked.clickedText}`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return true;
+      } else {
+        this.emitLog(`❌ 未找到好友: ${friendName}`);
+        return false;
+      }
+    } catch (error) {
+      this.emitLog(`❌ 搜索好友失败: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * 通过滚动查找并点击指定好友(旧方法 - 保留作为备用)
    */
   private async findAndClickFriend(page: puppeteer.Page, friendName: string): Promise<boolean> {
     this.emitLog(`📱 滚动查找好友: ${friendName}...`);
@@ -803,6 +1013,54 @@ export class WechatReachService {
       return true;
     } catch (error) {
       this.logger.error(`发送消息给 ${friendName} 失败: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * 直接发送消息(不打开聊天窗口,假设已经打开)
+   */
+  private async sendMessageToFriendDirect(
+    page: puppeteer.Page,
+    friendName: string,
+    message: string
+  ): Promise<boolean> {
+    try {
+      // 替换{昵称}变量
+      const finalMessage = message.replace(/\{昵称\}/g, friendName);
+
+      // 等待输入框出现
+      await page.waitForSelector('#editArea', { timeout: 10000 });
+
+      // #editArea是一个textarea元素,需要使用value属性
+      // 直接设置value并触发input事件,不会触发keydown/keypress事件
+      await page.evaluate((text) => {
+        const editArea = document.querySelector('#editArea') as HTMLTextAreaElement;
+        if (editArea) {
+          // 直接设置value属性
+          editArea.value = text;
+
+          // 触发input事件,让Vue知道内容已改变
+          const inputEvent = new Event('input', { bubbles: true });
+          editArea.dispatchEvent(inputEvent);
+
+          // 触发change事件
+          const changeEvent = new Event('change', { bubbles: true });
+          editArea.dispatchEvent(changeEvent);
+        }
+      }, finalMessage);
+
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // 点击发送按钮
+      await page.click('.send-btn');
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      this.emitLog(`✅ 文字消息已发送`);
+      return true;
+    } catch (error) {
+      this.logger.error(`直接发送消息失败: ${error.message}`);
+      this.emitLog(`❌ 文字消息发送失败: ${error.message}`);
       return false;
     }
   }
@@ -1027,8 +1285,8 @@ export class WechatReachService {
     try {
       this.emitLog(`📹 开始发送视频号给: ${friendName}`);
 
-      // 1. 滚动查找并点击好友打开聊天窗口
-      const friendFound = await this.findAndClickFriend(page, friendName);
+      // 1. 搜索并点击好友打开聊天窗口(使用搜索方式,更快)
+      const friendFound = await this.searchAndClickFriend(page, friendName);
       if (!friendFound) {
         throw new Error(`未找到好友: ${friendName}`);
       }
@@ -1240,6 +1498,159 @@ export class WechatReachService {
   }
 
   /**
+   * 直接发送视频号素材(不打开聊天窗口,假设已经打开)
+   */
+  private async sendVideoMaterialDirect(
+    page: puppeteer.Page,
+    materialId: number
+  ): Promise<boolean> {
+    try {
+      // 1. 点击"素材"按钮
+      await page.click('[title="素材"]');
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // 2. 点击"视频号素材" - 使用鼠标模拟点击
+      this.emitLog('📹 点击"视频号素材"选项...');
+
+      // 等待素材菜单完全展开
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // 获取"视频号素材"元素的屏幕坐标
+      const videoMaterialPosition = await page.evaluate(() => {
+        const allSpans = document.querySelectorAll('span');
+        for (const span of allSpans) {
+          if (span.textContent && span.textContent.trim() === '视频号素材') {
+            const rect = span.getBoundingClientRect();
+            return {
+              found: true,
+              x: rect.left + rect.width / 2,
+              y: rect.top + rect.height / 2,
+              text: span.textContent.trim(),
+            };
+          }
+        }
+        return { found: false, x: 0, y: 0, text: '' };
+      });
+
+      if (!videoMaterialPosition.found) {
+        throw new Error('未找到"视频号素材"菜单项');
+      }
+
+      // 移动鼠标到元素位置并点击
+      await page.mouse.move(videoMaterialPosition.x, videoMaterialPosition.y);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await page.mouse.click(videoMaterialPosition.x, videoMaterialPosition.y);
+
+      this.emitLog('✅ 已点击"视频号素材"选项');
+
+      // 等待素材库对话框打开
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      // 3. 点击"公共素材分组"展开
+      this.emitLog('📁 点击"公共素材分组"展开素材列表...');
+      const clickResult = await page.evaluate(() => {
+        const treeLabels = document.querySelectorAll('.el-tree-node__label');
+        for (const label of treeLabels) {
+          const text = label.textContent?.trim() || '';
+          if (text === '公共素材分组') {
+            (label as HTMLElement).click();
+            return { success: true, text };
+          }
+        }
+        return { success: false, text: '' };
+      });
+
+      if (!clickResult.success) {
+        throw new Error('未找到"公共素材分组"树节点');
+      }
+
+      this.emitLog(`✅ 已点击"公共素材分组"`);
+
+      // 4. 等待素材列表加载完成
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      // 5. 获取素材信息（从数据库）
+      const { data: material } = await this.supabaseService.getClient()
+        .from('duixueqiu_video_materials')
+        .select('*')
+        .eq('id', materialId)
+        .single();
+
+      if (!material) {
+        throw new Error('素材不存在');
+      }
+
+      this.emitLog(`📋 素材信息: ${material.author_name} - ${material.content_desc?.substring(0, 30)}...`);
+      this.emitLog(`📍 素材位置: 第${material.page_number}页, 索引${material.material_index}`);
+
+      // 6. 如果素材不在第1页，需要翻页
+      if (material.page_number > 1) {
+        for (let i = 1; i < material.page_number; i++) {
+          await page.evaluate(() => {
+            const buttons = document.querySelectorAll('button');
+            for (const button of buttons) {
+              if (button.textContent?.includes('下一页')) {
+                (button as HTMLElement).click();
+                break;
+              }
+            }
+          });
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+      }
+
+      // 7. 点击第N个素材的对号图标
+      this.emitLog(`📌 点击第 ${material.material_index + 1} 个素材的对号图标...`);
+
+      const clicked = await page.evaluate((index) => {
+        const confirmIcons = document.querySelectorAll('.confirm-icon');
+        if (confirmIcons[index]) {
+          (confirmIcons[index] as HTMLElement).click();
+          return { success: true, count: confirmIcons.length };
+        }
+        return { success: false, count: confirmIcons.length };
+      }, material.material_index);
+
+      if (!clicked.success) {
+        throw new Error(`未找到第 ${material.material_index + 1} 个对号图标`);
+      }
+
+      this.emitLog(`✅ 已点击对号图标`);
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // 8. 点击底部的"确定"按钮
+      this.emitLog(`🔘 点击确定按钮...`);
+      const confirmClicked = await page.evaluate(() => {
+        const successButtons = document.querySelectorAll('button.el-button--success');
+        for (const button of successButtons) {
+          const text = button.textContent?.trim();
+          if (text === '确定' || text === '确 定') {
+            (button as HTMLElement).click();
+            return true;
+          }
+        }
+        return false;
+      });
+
+      if (!confirmClicked) {
+        this.emitLog(`⚠️ 未找到确定按钮,但继续执行`);
+      } else {
+        this.emitLog(`✅ 已点击确定按钮`);
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      this.emitLog(`✅ 视频号素材已发送`);
+      return true;
+
+    } catch (error) {
+      this.logger.error(`直接发送视频号失败: ${error.message}`);
+      this.emitLog(`❌ 视频号素材发送失败: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
    * 发送链接素材给好友
    */
   private async sendLinkMaterialToFriend(
@@ -1251,8 +1662,8 @@ export class WechatReachService {
     try {
       this.emitLog(`🔗 开始发送链接给: ${friendName}`);
 
-      // 1. 滚动查找并点击好友打开聊天窗口
-      const friendFound = await this.findAndClickFriend(page, friendName);
+      // 1. 搜索并点击好友打开聊天窗口(使用搜索方式,更快)
+      const friendFound = await this.searchAndClickFriend(page, friendName);
       if (!friendFound) {
         throw new Error(`未找到好友: ${friendName}`);
       }
@@ -1470,6 +1881,159 @@ export class WechatReachService {
   }
 
   /**
+   * 直接发送链接素材(不打开聊天窗口,假设已经打开)
+   */
+  private async sendLinkMaterialDirect(
+    page: puppeteer.Page,
+    materialId: number
+  ): Promise<boolean> {
+    try {
+      // 1. 点击"素材"按钮
+      await page.click('[title="素材"]');
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // 2. 点击"链接素材" - 使用鼠标模拟点击
+      this.emitLog('🔗 点击"链接素材"选项...');
+
+      // 等待素材菜单完全展开
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // 获取"链接素材"元素的屏幕坐标
+      const linkMaterialPosition = await page.evaluate(() => {
+        const allSpans = document.querySelectorAll('span');
+        for (const span of allSpans) {
+          if (span.textContent && span.textContent.trim() === '链接素材') {
+            const rect = span.getBoundingClientRect();
+            return {
+              found: true,
+              x: rect.left + rect.width / 2,
+              y: rect.top + rect.height / 2,
+              text: span.textContent.trim(),
+            };
+          }
+        }
+        return { found: false, x: 0, y: 0, text: '' };
+      });
+
+      if (!linkMaterialPosition.found) {
+        throw new Error('未找到"链接素材"菜单项');
+      }
+
+      // 移动鼠标到元素位置并点击
+      await page.mouse.move(linkMaterialPosition.x, linkMaterialPosition.y);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await page.mouse.click(linkMaterialPosition.x, linkMaterialPosition.y);
+
+      this.emitLog('✅ 已点击"链接素材"选项');
+
+      // 等待素材库对话框打开
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      // 3. 点击"公共素材分组"展开
+      this.emitLog('📁 点击"公共素材分组"展开素材列表...');
+      const clickResult = await page.evaluate(() => {
+        const treeLabels = document.querySelectorAll('.el-tree-node__label');
+        for (const label of treeLabels) {
+          const text = label.textContent?.trim() || '';
+          if (text === '公共素材分组') {
+            (label as HTMLElement).click();
+            return { success: true, text };
+          }
+        }
+        return { success: false, text: '' };
+      });
+
+      if (!clickResult.success) {
+        throw new Error('未找到"公共素材分组"树节点');
+      }
+
+      this.emitLog(`✅ 已点击"公共素材分组"`);
+
+      // 4. 等待素材列表加载完成
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      // 5. 获取素材信息（从数据库）
+      const { data: material } = await this.supabaseService.getClient()
+        .from('duixueqiu_link_materials')
+        .select('*')
+        .eq('id', materialId)
+        .single();
+
+      if (!material) {
+        throw new Error('素材不存在');
+      }
+
+      this.emitLog(`📋 素材信息: ${material.title?.substring(0, 50)}...`);
+      this.emitLog(`📍 素材位置: 第${material.page_number}页, 索引${material.material_index}`);
+
+      // 6. 如果素材不在第1页，需要翻页
+      if (material.page_number > 1) {
+        for (let i = 1; i < material.page_number; i++) {
+          await page.evaluate(() => {
+            const buttons = document.querySelectorAll('button');
+            for (const button of buttons) {
+              if (button.textContent?.includes('下一页')) {
+                (button as HTMLElement).click();
+                break;
+              }
+            }
+          });
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+      }
+
+      // 7. 点击第N个素材的对号图标
+      this.emitLog(`📌 点击第 ${material.material_index + 1} 个素材的对号图标...`);
+
+      const clicked = await page.evaluate((index) => {
+        const confirmIcons = document.querySelectorAll('.confirm-icon');
+        if (confirmIcons[index]) {
+          (confirmIcons[index] as HTMLElement).click();
+          return { success: true, count: confirmIcons.length };
+        }
+        return { success: false, count: confirmIcons.length };
+      }, material.material_index);
+
+      if (!clicked.success) {
+        throw new Error(`未找到第 ${material.material_index + 1} 个对号图标`);
+      }
+
+      this.emitLog(`✅ 已点击对号图标`);
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // 8. 点击底部的"确定"按钮
+      this.emitLog(`🔘 点击确定按钮...`);
+      const confirmClicked = await page.evaluate(() => {
+        const successButtons = document.querySelectorAll('button.el-button--success');
+        for (const button of successButtons) {
+          const text = button.textContent?.trim();
+          if (text === '确定' || text === '确 定') {
+            (button as HTMLElement).click();
+            return true;
+          }
+        }
+        return false;
+      });
+
+      if (!confirmClicked) {
+        this.emitLog(`⚠️ 未找到确定按钮,但继续执行`);
+      } else {
+        this.emitLog(`✅ 已点击确定按钮`);
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      this.emitLog(`✅ 链接素材已发送`);
+      return true;
+
+    } catch (error) {
+      this.logger.error(`直接发送链接失败: ${error.message}`);
+      this.emitLog(`❌ 链接素材发送失败: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
    * 发送图片给好友
    */
   private async sendImageToFriend(
@@ -1672,21 +2236,31 @@ export class WechatReachService {
     try {
       this.emitLog(`🎯 开始组合发送给: ${friendName}`);
 
-      // 按照优先级排序: 文字优先,其他的无所谓
+      // 1. 先搜索并打开聊天窗口(只打开一次)
+      this.emitLog(`👤 搜索并打开聊天窗口: ${friendName}`);
+      const friendFound = await this.searchAndClickFriend(page, friendName);
+      if (!friendFound) {
+        throw new Error(`未找到好友: ${friendName}`);
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // 2. 按照优先级排序: 文字优先,其他的无所谓
       const sortedContents = [...contents].sort((a, b) => {
         if (a.type === 'text') return -1;
         if (b.type === 'text') return 1;
         return 0;
       });
 
-      // 逐个发送
+      // 3. 逐个发送(不再重新打开聊天窗口)
       for (let i = 0; i < sortedContents.length; i++) {
         const content = sortedContents[i];
 
         switch (content.type) {
           case 'text':
             this.emitLog(`💬 发送文字消息...`);
-            const textSuccess = await this.sendMessageToFriend(page, friendName, content.message);
+            this.emitLog(`📝 文字消息内容长度: ${content.message?.length || 0}字符`);
+            this.emitLog(`📝 文字消息前100字符: ${content.message?.substring(0, 100) || '(空)'}`);
+            const textSuccess = await this.sendMessageToFriendDirect(page, friendName, content.message);
             if (!textSuccess) {
               this.emitLog(`⚠️ 文字消息发送失败,继续发送其他内容`);
             }
@@ -1694,7 +2268,7 @@ export class WechatReachService {
 
           case 'video':
             this.emitLog(`📹 发送视频号素材...`);
-            const videoSuccess = await this.sendVideoMaterialToFriend(page, friendName, content.materialId);
+            const videoSuccess = await this.sendVideoMaterialDirect(page, content.materialId);
             if (!videoSuccess) {
               this.emitLog(`⚠️ 视频号素材发送失败,继续发送其他内容`);
             }
@@ -1702,7 +2276,7 @@ export class WechatReachService {
 
           case 'link':
             this.emitLog(`🔗 发送链接素材...`);
-            const linkSuccess = await this.sendLinkMaterialToFriend(page, friendName, content.materialId);
+            const linkSuccess = await this.sendLinkMaterialDirect(page, content.materialId);
             if (!linkSuccess) {
               this.emitLog(`⚠️ 链接素材发送失败,继续发送其他内容`);
             }
@@ -2209,7 +2783,8 @@ export class WechatReachService {
     userId: string,
     taskId: string,
     forbiddenTimeRanges?: Array<{startTime: string, endTime: string}>,
-    selectedWechatAccountIndexes?: number[]
+    selectedWechatAccountIndexes?: number[],
+    selectedFriendIds?: string[] // 新增: 选中的好友ID列表
   ): Promise<void> {
     if (this.isRunning) {
       throw new Error('已有任务正在运行中');
@@ -2242,16 +2817,45 @@ export class WechatReachService {
 
       // 启动浏览器
       const puppeteer = require('puppeteer');
-      browser = await puppeteer.launch({
-        headless: true,
+
+      // 从环境变量读取headless配置,默认为true(无头模式)
+      // 设置PUPPETEER_HEADLESS=false可以显示浏览器窗口
+      const headless = process.env.PUPPETEER_HEADLESS !== 'false';
+      this.emitLog(`🖥️  浏览器模式: ${headless ? '无头模式(后台运行)' : '有头模式(显示窗口)'}`);
+
+      const launchOptions: any = {
+        headless: headless,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
         ],
-      });
+      };
+
+      // 如果是有头模式,添加额外的配置确保窗口显示
+      if (!headless) {
+        launchOptions.args.push(
+          '--start-maximized',  // 最大化窗口
+          '--window-size=1920,1080',
+        );
+        launchOptions.dumpio = true; // 输出浏览器进程的stdout和stderr
+        launchOptions.devtools = false; // 不自动打开开发者工具
+        this.emitLog('🖥️  有头模式: 浏览器窗口应该会显示在屏幕上');
+      }
+
+      browser = await puppeteer.launch(launchOptions);
+      this.emitLog('✅ Puppeteer浏览器已启动');
+
       page = await browser.newPage();
+      this.emitLog('✅ 新页面已创建');
+
+      // 设置默认超时时间为5分钟,避免页面加载慢导致超时
+      page.setDefaultNavigationTimeout(300000); // 5分钟
+      page.setDefaultTimeout(300000); // 5分钟
+      this.emitLog('✅ 已设置默认超时时间为300秒(5分钟)');
+
       await page.setViewport({ width: 1920, height: 1080 });
+      this.emitLog('✅ 视口已设置');
 
       // 登录堆雪球
       await this.loginDuixueqiu(page, account.username, account.password);
@@ -2283,22 +2887,71 @@ export class WechatReachService {
       await this.clickUnfoldGroup(page);
 
       // 从数据库获取选中的好友列表
-      const selectedFriends = await this.duixueqiuFriendsService.getSelectedFriends(userId);
+      let selectedFriends: any[];
+
+      if (selectedFriendIds && selectedFriendIds.length > 0) {
+        // 如果前端传递了好友ID列表,使用这个列表
+        this.emitLog(`📋 使用前端传递的好友ID列表 (${selectedFriendIds.length}个)`);
+
+        const { data, error } = await this.supabaseService.getClient()
+          .from('duixueqiu_friends')
+          .select('*')
+          .eq('user_id', userId)
+          .in('id', selectedFriendIds);
+
+        if (error) {
+          throw new Error(`获取好友信息失败: ${error.message}`);
+        }
+
+        selectedFriends = data || [];
+      } else {
+        // 否则使用数据库中is_selected=true的好友
+        this.emitLog(`📋 使用数据库中is_selected=true的好友`);
+        selectedFriends = await this.duixueqiuFriendsService.getSelectedFriends(userId);
+      }
+
       this.emitLog(`👥 已选中 ${selectedFriends.length} 个好友`);
+
+      // 输出选中的好友名单
+      this.emitLog(`📋 选中的好友名单:`);
+      for (const friend of selectedFriends) {
+        const friendName = friend.friend_remark || friend.friend_name;
+        this.emitLog(`  - ${friendName} (${friend.wechat_account_name})`);
+      }
 
       if (selectedFriends.length === 0) {
         throw new Error('未选中任何好友，请先同步并选择好友');
       }
 
-      // 转换为friends格式
-      const friends = selectedFriends.map(f => ({
-        name: f.friend_name,
-        remark: f.friend_remark || ''
-      }));
+      // 按微信号分组好友
+      const friendsByAccount = new Map<string, any[]>();
+      for (const friend of selectedFriends) {
+        const accountName = friend.wechat_account_name;
+        if (!friendsByAccount.has(accountName)) {
+          friendsByAccount.set(accountName, []);
+        }
+        friendsByAccount.get(accountName)!.push(friend);
+      }
+
+      this.emitLog(`📱 好友分布在 ${friendsByAccount.size} 个微信号中`);
+      for (const [accountName, accountFriends] of friendsByAccount.entries()) {
+        this.emitLog(`  - ${accountName}: ${accountFriends.length}个好友`);
+      }
+
+      // 计算总好友数 - 只计算选中微信号下的好友
+      let totalFriends = 0;
+      for (const wechatAccount of wechatAccounts) {
+        const accountFriends = friendsByAccount.get(wechatAccount.name);
+        if (accountFriends && accountFriends.length > 0) {
+          totalFriends += accountFriends.length;
+        }
+      }
+
+      this.emitLog(`📊 本次任务将发送给 ${totalFriends} 个好友 (来自 ${wechatAccounts.length} 个微信号)`);
 
       // 计算发送间隔
       const { baseInterval, dailySend } = this.calculateInterval(
-        friends.length,
+        totalFriends,
         wechatAccounts.length,
         targetDays
       );
@@ -2306,61 +2959,79 @@ export class WechatReachService {
       this.emitLog(`⏱️ 发送间隔: ${baseInterval.toFixed(1)}秒/人`);
       this.emitLog(`📊 预计每天发送: ${dailySend}人`);
 
-      // 开始轮流使用多个微信号发送
+      // 开始按微信号分组发送
       let successCount = 0;
       let failCount = 0;
-      let currentAccountIndex = 0;
+      let processedCount = 0;
 
-      for (let i = 0; i < friends.length; i++) {
+      // 遍历用户选择的微信号
+      for (const wechatAccount of wechatAccounts) {
         // 检查是否停止
         if (!this.isRunning) {
           this.emitLog('⏹️ 任务已停止');
           break;
         }
 
-        // 检查是否暂停
-        while (this.isPaused) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
+        // 获取该微信号下的好友
+        const accountFriends = friendsByAccount.get(wechatAccount.name);
+
+        // 如果该微信号下没有选中的好友,跳过
+        if (!accountFriends || accountFriends.length === 0) {
+          this.emitLog(`⚠️ 微信号 ${wechatAccount.name} 下没有选中的好友,跳过`);
+          continue;
         }
 
-        // 检查是否在禁发时间段内
-        if (this.isInForbiddenTime(forbiddenTimeRanges || [])) {
-          await this.waitForNextSendingTime(forbiddenTimeRanges || []);
-        }
+        this.emitLog(`📱 切换到微信号: ${wechatAccount.name} (${accountFriends.length}个好友)`);
 
         // 切换到当前微信号
-        const currentAccount = wechatAccounts[currentAccountIndex];
-        this.emitLog(`📱 使用微信号: ${currentAccount.name}`);
-        await this.switchWechatAccount(page, currentAccount.name);
+        await this.switchWechatAccount(page, wechatAccount.name);
+        await new Promise(resolve => setTimeout(resolve, 1000));
 
-        const friend = friends[i];
-        this.emitLog(`[${i + 1}/${friends.length}] 发送给: ${friend.name}`);
+        // 遍历该微信号下的好友
+        for (const friend of accountFriends) {
+          // 检查是否停止
+          if (!this.isRunning) {
+            this.emitLog('⏹️ 任务已停止');
+            break;
+          }
 
-        // 组合发送
-        const success = await this.sendCombinedContents(page, friend.name, contents);
+          // 检查是否暂停
+          while (this.isPaused) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
 
-        if (success) {
-          successCount++;
-        } else {
-          failCount++;
-        }
+          // 检查是否在禁发时间段内
+          if (this.isInForbiddenTime(forbiddenTimeRanges || [])) {
+            await this.waitForNextSendingTime(forbiddenTimeRanges || []);
+          }
 
-        // 发送进度
-        this.emitProgress({
-          current: i + 1,
-          total: friends.length,
-          successCount,
-          failCount,
-          progress: ((i + 1) / friends.length * 100).toFixed(1),
-        });
+          processedCount++;
+          const friendName = friend.friend_remark || friend.friend_name;
+          this.emitLog(`[${processedCount}/${totalFriends}] 发送给: ${friendName}`);
 
-        // 切换到下一个微信号
-        currentAccountIndex = (currentAccountIndex + 1) % wechatAccounts.length;
+          // 组合发送
+          const success = await this.sendCombinedContents(page, friendName, contents);
 
-        // 等待间隔
-        if (i < friends.length - 1) {
-          this.emitLog(`⏳ 等待 ${baseInterval.toFixed(1)} 秒...`);
-          await new Promise(resolve => setTimeout(resolve, baseInterval * 1000));
+          if (success) {
+            successCount++;
+          } else {
+            failCount++;
+          }
+
+          // 发送进度
+          this.emitProgress({
+            current: processedCount,
+            total: totalFriends,
+            successCount,
+            failCount,
+            progress: ((processedCount) / totalFriends * 100).toFixed(1),
+          });
+
+          // 等待间隔 - 只等待3秒,避免被检测为异常
+          if (processedCount < totalFriends) {
+            this.emitLog(`⏳ 等待3秒后发送下一个好友...`);
+            await new Promise(resolve => setTimeout(resolve, 3000));
+          }
         }
       }
 
@@ -2378,6 +3049,206 @@ export class WechatReachService {
       this.isRunning = false;
       this.isPaused = false;
       this.currentTaskId = null;
+    }
+  }
+
+  /**
+   * 发送私聊消息给多个好友(使用搜索框,更快更准确)
+   */
+  async sendPrivateMessages(params: {
+    userId: string;
+    friendIds: string[]; // 选中的好友ID列表
+    messageType: 'text' | 'video' | 'link';
+    messageContent: string; // 文字内容或附加文案
+    materialId?: string; // 视频号或链接素材ID
+  }): Promise<void> {
+    const { userId, friendIds, messageType, messageContent, materialId } = params;
+
+    let browser: any = null;
+    let page: any = null;
+
+    try {
+      this.isRunning = true;
+      this.emitLog('🚀 开始发送私聊消息...');
+
+      // 1. 从数据库获取好友信息
+      const { data: friends, error: friendsError } = await this.supabaseService
+        .getClient()
+        .from('duixueqiu_friends')
+        .select('*')
+        .in('id', friendIds)
+        .eq('user_id', userId);
+
+      if (friendsError || !friends || friends.length === 0) {
+        throw new Error('未找到选中的好友');
+      }
+
+      this.emitLog(`📋 准备发送给 ${friends.length} 个好友`);
+
+      // 2. 获取堆雪球账号配置
+      const { data: accounts, error: accountError } = await this.supabaseService
+        .getClient()
+        .from('duixueqiu_accounts')
+        .select('*')
+        .eq('user_id', userId)
+        .limit(1);
+
+      if (accountError || !accounts || accounts.length === 0) {
+        throw new Error('未找到堆雪球账号配置，请先添加账号');
+      }
+
+      const account = accounts[0];
+
+      // 3. 启动浏览器
+      const puppeteer = require('puppeteer');
+      browser = await puppeteer.launch({
+        headless: false, // 本地测试使用非无头模式
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+        ],
+      });
+      page = await browser.newPage();
+      await page.setViewport({ width: 1920, height: 1080 });
+
+      // 4. 登录堆雪球
+      this.emitLog('🔐 登录堆雪球...');
+      await this.loginDuixueqiu(page, account.username, account.password);
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      // 5. 点击"好友列表"标签
+      this.emitLog('📋 切换到好友列表...');
+      await page.evaluate(() => {
+        const divs = document.querySelectorAll('div');
+        for (const div of divs) {
+          if (div.textContent?.trim() === '好友列表' && div.getAttribute('title') === '好友列表') {
+            (div as HTMLElement).click();
+            return true;
+          }
+        }
+        return false;
+      });
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // 6. 获取所有微信号
+      const wechatAccounts = await this.getWechatAccounts(page);
+      this.emitLog(`📱 找到 ${wechatAccounts.length} 个微信号`);
+
+      // 7. 按微信号分组好友
+      const friendsByAccount = new Map<string, any[]>();
+      for (const friend of friends) {
+        const accountName = friend.wechat_account_name;
+        if (!friendsByAccount.has(accountName)) {
+          friendsByAccount.set(accountName, []);
+        }
+        friendsByAccount.get(accountName)!.push(friend);
+      }
+
+      this.emitLog(`📊 好友分布在 ${friendsByAccount.size} 个微信号中`);
+
+      // 8. 遍历每个微信号
+      let successCount = 0;
+      let failCount = 0;
+      let totalProcessed = 0;
+
+      for (const [accountName, accountFriends] of friendsByAccount.entries()) {
+        this.emitLog(`📱 切换到微信号: ${accountName}`);
+
+        // 选择微信号
+        await this.switchWechatAccount(page, accountName);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // 9. 遍历该微信号下的好友
+        for (const friend of accountFriends) {
+          // 检查是否停止
+          if (!this.isRunning) {
+            this.emitLog('⏹️ 任务已停止');
+            break;
+          }
+
+          totalProcessed++;
+          this.emitLog(`👤 [${totalProcessed}/${friends.length}] 准备发送给: ${friend.friend_name}`);
+
+          // 10. 发送消息
+          let success = false;
+          try {
+            const personalizedContent = messageContent.replace(/{昵称}/g, friend.friend_name);
+
+            if (messageType === 'text') {
+              // 发送文字消息 - 使用搜索方式
+              // 10.1 搜索并点击好友
+              const found = await this.searchAndClickFriend(page, friend.friend_name);
+
+              if (!found) {
+                throw new Error('未找到好友');
+              }
+
+              // 10.2 输入消息
+              await page.type('#editArea', personalizedContent);
+              await new Promise(resolve => setTimeout(resolve, 500));
+
+              // 10.3 点击发送按钮
+              await page.click('.send-btn');
+              await new Promise(resolve => setTimeout(resolve, 500));
+
+              // 10.4 返回好友列表
+              await page.goBack();
+              await new Promise(resolve => setTimeout(resolve, 1000));
+
+              success = true;
+            } else if (messageType === 'video' && materialId) {
+              // 发送视频号消息 - sendVideoMaterialToFriend内部会查找好友
+              success = await this.sendVideoMaterialToFriend(page, friend.friend_name, parseInt(materialId));
+            } else if (messageType === 'link' && materialId) {
+              // 发送链接消息 - sendLinkMaterialToFriend内部会查找好友
+              success = await this.sendLinkMaterialToFriend(page, friend.friend_name, parseInt(materialId));
+            }
+
+            if (success) {
+              this.emitLog(`✅ 已发送给: ${friend.friend_name}`);
+              successCount++;
+            } else {
+              this.emitLog(`❌ 发送失败: ${friend.friend_name}`);
+              failCount++;
+            }
+          } catch (error) {
+            this.emitLog(`❌ 发送失败: ${friend.friend_name} - ${error.message}`);
+            failCount++;
+          }
+
+          // 发送进度
+          this.emitProgress({
+            current: totalProcessed,
+            total: friends.length,
+            successCount,
+            failCount,
+            progress: (totalProcessed / friends.length * 100).toFixed(1),
+          });
+
+          // 13. 间隔控制(3秒)
+          if (totalProcessed < friends.length) {
+            this.emitLog(`⏳ 等待 3 秒...`);
+            await new Promise(resolve => setTimeout(resolve, 3000));
+          }
+        }
+
+        if (!this.isRunning) break;
+      }
+
+      this.emitLog('🎉 任务完成!');
+      this.emitLog(`✅ 成功: ${successCount}人`);
+      this.emitLog(`❌ 失败: ${failCount}人`);
+
+    } catch (error) {
+      this.logger.error('发送私聊消息失败:', error);
+      this.emitLog(`❌ 任务失败: ${error.message}`);
+      throw error;
+    } finally {
+      if (page) await page.close();
+      if (browser) await browser.close();
+      this.isRunning = false;
+      this.isPaused = false;
     }
   }
 
