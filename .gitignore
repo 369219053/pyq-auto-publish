@@ -37,3 +37,4 @@ we-mp-rss-data/
 # PM2
 .pm2/
 
+*备份*.tar.gz
