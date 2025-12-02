@@ -1244,29 +1244,34 @@ export class DuixueqiuFriendsService {
 
   /**
    * 获取好友列表(从数据库)
-   * 使用分页查询避免Supabase默认1000条限制
+   * 使用分页查询避免Supabase默认1000条限制和查询超时
    */
   async getFriends(userId: string): Promise<any[]> {
     let allData = [];
     let start = 0;
-    const limit = 10000;
+    const limit = 2000; // 降低每次查询数量,避免超时
+
+    this.logger.log(`开始获取好友列表: userId=${userId}`);
 
     while (true) {
+      this.logger.log(`查询第 ${Math.floor(start / limit) + 1} 批,范围: ${start} - ${start + limit - 1}`);
+
       const { data, error } = await this.supabaseService.getClient()
         .from('duixueqiu_friends')
-        .select('*')
+        .select('id, user_id, friend_name, friend_remark, avatar_url, wechat_account_index, wechat_account_name, is_selected')
         .eq('user_id', userId)
         .order('friend_name', { ascending: true })
         .range(start, start + limit - 1);
 
       if (error) {
-        this.logger.error(`获取好友列表失败: ${error.message}`);
+        this.logger.error(`获取好友列表失败(第${Math.floor(start / limit) + 1}批): ${error.message}`);
         throw error;
       }
 
       if (!data || data.length === 0) break;
 
       allData = allData.concat(data);
+      this.logger.log(`第 ${Math.floor(start / limit) + 1} 批查询完成,获取 ${data.length} 个好友,累计 ${allData.length} 个`);
 
       // 如果返回的数据少于limit,说明已经是最后一页
       if (data.length < limit) break;

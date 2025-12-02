@@ -337,6 +337,7 @@ export class AutomationController {
     },
   ) {
     this.logger.log(`收到脚本2请求: 微信好友触达（组合发送）`);
+    this.logger.log(`🐛 Controller接收到的userId: ${body.userId}, 类型: ${typeof body.userId}`);
     this.logger.log(`内容类型: ${body.contents.map(c => c.type).join(', ')}, 目标完成时间: ${body.targetDays}天`);
     if (body.selectedWechatAccountIndexes && body.selectedWechatAccountIndexes.length > 0) {
       this.logger.log(`选中微信号数量: ${body.selectedWechatAccountIndexes.length}个`);
@@ -384,18 +385,18 @@ export class AutomationController {
   }
 
   /**
-   * 暂停脚本2任务
+   * 暂停脚本2任务 (升级版: 关闭浏览器释放账号)
    */
   @Post('script2/pause')
   async pauseScript2() {
     this.logger.log(`收到暂停脚本2请求`);
 
     try {
-      this.wechatReachService.pauseTask();
+      await this.wechatReachService.pauseTask();
 
       return {
         success: true,
-        message: '任务已暂停',
+        message: '任务已暂停,浏览器已关闭,堆雪球账号已释放',
       };
     } catch (error) {
       this.logger.error(`暂停任务失败: ${error.message}`, error.stack);
@@ -407,18 +408,18 @@ export class AutomationController {
   }
 
   /**
-   * 恢复脚本2任务
+   * 恢复脚本2任务 (升级版: 重新登录并继续)
    */
   @Post('script2/resume')
   async resumeScript2() {
     this.logger.log(`收到恢复脚本2请求`);
 
     try {
-      this.wechatReachService.resumeTask();
+      await this.wechatReachService.resumeTask();
 
       return {
         success: true,
-        message: '任务已恢复',
+        message: '任务已恢复,正在重新登录堆雪球...',
       };
     } catch (error) {
       this.logger.error(`恢复任务失败: ${error.message}`, error.stack);
@@ -437,7 +438,7 @@ export class AutomationController {
     this.logger.log(`收到停止脚本2请求`);
 
     try {
-      this.wechatReachService.stopTask();
+      await this.wechatReachService.stopTask();
 
       return {
         success: true,

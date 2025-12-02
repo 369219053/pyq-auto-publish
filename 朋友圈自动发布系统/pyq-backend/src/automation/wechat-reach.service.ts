@@ -4,6 +4,7 @@ import { SupabaseService } from '../common/supabase.service';
 import { AutomationGateway } from './automation.gateway';
 import { DuixueqiuFriendsService } from './duixueqiu-friends.service';
 import * as puppeteer from 'puppeteer';
+import * as crypto from 'crypto';
 
 /**
  * 脚本2: 微信好友触达服务
@@ -15,6 +16,13 @@ export class WechatReachService {
   private isRunning = false;
   private isPaused = false;
   private currentTaskId: string = null;
+
+  // 新增: 保存当前任务的浏览器和页面实例
+  private currentBrowser: any = null;
+  private currentPage: any = null;
+
+  // 新增: 保存当前任务参数,用于继续任务
+  private currentTaskParams: any = null;
 
   constructor(
     private readonly puppeteerService: PuppeteerService,
@@ -730,12 +738,163 @@ export class WechatReachService {
   }
 
   /**
-   * 通过搜索框查找并点击指定好友(新方法 - 更快更准确)
+   * 计算消息内容的哈希值
+   * 用于快速比对是否已发送过相同消息
    */
-  private async searchAndClickFriend(page: puppeteer.Page, friendName: string): Promise<boolean> {
+  private calculateMessageHash(messageType: string, messageContent: any): string {
+    let contentString = '';
+
+    switch (messageType) {
+      case 'text':
+        contentString = messageContent.text || '';
+        break;
+      case 'video':
+        contentString = `video_${messageContent.materialId}_${messageContent.additionalMessage || ''}`;
+        break;
+      case 'link':
+        contentString = `link_${messageContent.materialId}_${messageContent.additionalMessage || ''}`;
+        break;
+      case 'image':
+        // 🆕 图片类型:对imageUrls数组排序后再计算hash,确保顺序一致
+        const imageUrls = messageContent.imageUrls || [];
+        contentString = `image_${imageUrls.sort().join(',')}`;
+        break;
+      case 'combined':
+        contentString = JSON.stringify(messageContent.contents || []);
+        break;
+      default:
+        contentString = JSON.stringify(messageContent);
+    }
+
+    return crypto.createHash('sha256').update(contentString).digest('hex');
+  }
+
+  /**
+   * 检查是否已经给该好友发送过相同的消息
+   * @returns true表示已发送过,false表示未发送过
+   */
+  private async checkMessageSent(
+    userId: string,
+    friendId: number | string,
+    messageType: string,
+    messageContent: any
+  ): Promise<boolean> {
+    try {
+      const contentHash = this.calculateMessageHash(messageType, messageContent);
+
+      // 确保friendId是数字类型(数据库中是BIGINT)
+      const friendIdNum = typeof friendId === 'string' ? parseInt(friendId) : friendId;
+
+      const { data, error } = await this.supabaseService.getClient()
+        .from('message_send_history')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('friend_id', friendIdNum)
+        .eq('message_content_hash', contentHash)
+        .limit(1);
+
+      if (error) {
+        this.logger.error(`检查消息发送历史失败: ${error.message}`);
+        return false; // 出错时默认未发送,继续发送
+      }
+
+      const result = data && data.length > 0;
+      if (result) {
+        this.logger.log(`✅ 检测到重复消息: friendId=${friendIdNum}, hash=${contentHash}`);
+      }
+      return result;
+    } catch (error) {
+      this.logger.error(`检查消息发送历史异常: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * 记录消息发送历史
+   */
+  private async recordMessageSent(
+    userId: string,
+    friendId: number | string,
+    friendName: string,
+    messageType: string,
+    messageContent: any,
+    taskId?: string
+  ): Promise<void> {
+    try {
+      const contentHash = this.calculateMessageHash(messageType, messageContent);
+
+      // 确保friendId是数字类型(数据库中是BIGINT)
+      const friendIdNum = typeof friendId === 'string' ? parseInt(friendId) : friendId;
+
+      const { error } = await this.supabaseService.getClient()
+        .from('message_send_history')
+        .insert({
+          user_id: userId,
+          friend_id: friendIdNum,
+          friend_name: friendName,
+          message_type: messageType,
+          message_content_hash: contentHash,
+          message_content: messageContent,
+          task_id: taskId,
+          sent_at: new Date().toISOString()
+        });
+
+      if (error) {
+        this.logger.error(`记录消息发送历史失败: ${error.message}`);
+      } else {
+        this.logger.log(`✅ 记录发送历史成功: friendId=${friendIdNum}, hash=${contentHash}`);
+      }
+    } catch (error) {
+      this.logger.error(`记录消息发送历史异常: ${error.message}`);
+    }
+  }
+
+  /**
+   * 通过搜索框查找并点击指定好友(新方法 - 更快更准确)
+   * 同时匹配好友名称和头像URL,确保100%准确
+   */
+  private async searchAndClickFriend(
+    page: puppeteer.Page,
+    friendName: string,
+    userId?: string
+  ): Promise<boolean> {
     this.emitLog(`🔍 搜索好友: ${friendName}...`);
 
     try {
+      // 0. 从数据库获取好友的头像URL
+      let avatarUrl: string | null = null;
+      if (userId) {
+        const { data: friendData } = await this.supabaseService.getClient()
+          .from('duixueqiu_friends')
+          .select('avatar_url')
+          .eq('user_id', userId)
+          .eq('friend_name', friendName)
+          .limit(1)
+          .single();
+
+        if (friendData && friendData.avatar_url) {
+          avatarUrl = friendData.avatar_url;
+          this.emitLog(`🖼️ 获取到好友头像URL: ${avatarUrl.substring(0, 50)}...`);
+        }
+      }
+      // 0. 先点击"好友列表"标签,确保在正确的列表中搜索
+      this.emitLog(`📋 点击"好友列表"标签...`);
+      const friendListClicked = await page.evaluate(() => {
+        const friendListTab = document.querySelector('div[title="好友列表"].friend') as HTMLElement;
+        if (friendListTab) {
+          friendListTab.click();
+          return true;
+        }
+        return false;
+      });
+
+      if (friendListClicked) {
+        this.emitLog(`✅ 已点击"好友列表"标签`);
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } else {
+        this.emitLog(`⚠️ 未找到"好友列表"标签,继续搜索...`);
+      }
+
       // 1. 清空搜索框
       await page.evaluate(() => {
         const searchInput = document.querySelector('input[placeholder="昵称/备注/标签"]') as HTMLInputElement;
@@ -747,45 +906,124 @@ export class WechatReachService {
       });
       await new Promise(resolve => setTimeout(resolve, 300));
 
-      // 2. 输入好友昵称
+      // 2. 输入好友昵称(智能提取搜索关键词)
       const searchInput = await page.$('input[placeholder="昵称/备注/标签"]');
       if (!searchInput) {
         this.emitLog(`❌ 未找到搜索框`);
         return false;
       }
 
+      // 智能提取搜索关键词:
+      // 堆雪球搜索规则: 只支持单个连续的中文/数字关键词,不支持多个关键词组合
+      // 策略: 按标点符号分割,提取最长的中文/数字片段作为搜索关键词
+      // 示例: "微博-杨女士-购房" → ["微博", "杨女士", "购房"] → 选择"杨女士"(中间的)
+      // 示例: "..—家长志愿者(Nina)" → ["家长志愿者"] → 选择"家长志愿者"
+
+      // 按所有非中文、非数字字符分割
+      const segments = friendName.split(/[^\u4e00-\u9fa50-9]+/).filter(s => s.length > 0);
+
+      // 选择最长的片段作为搜索关键词(通常是中间的主要部分)
+      let searchKeyword = '';
+      if (segments.length > 0) {
+        // 如果有多个片段,选择最长的
+        searchKeyword = segments.reduce((longest, current) =>
+          current.length > longest.length ? current : longest
+        );
+      } else {
+        // 如果没有片段,使用原始名称
+        searchKeyword = friendName;
+      }
+
+      this.emitLog(`🔧 原始名称: ${friendName}`);
+      this.emitLog(`🔧 分割片段: [${segments.join(', ')}]`);
+      this.emitLog(`🔧 搜索关键词(最长片段): ${searchKeyword}`);
+
       await searchInput.click();
       await new Promise(resolve => setTimeout(resolve, 200));
-      await searchInput.type(friendName);
-      this.emitLog(`⌨️ 已输入搜索关键词: ${friendName}`);
+      await searchInput.type(searchKeyword);
+      this.emitLog(`⌨️ 已输入搜索关键词: ${searchKeyword}`);
 
       // 3. 等待搜索结果
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // 4. 点击搜索结果中的好友
-      const clicked = await page.evaluate((name) => {
-        // 查找所有好友元素
-        const friendElements = document.querySelectorAll('.recent-and-friend-panel-concat-item__friend');
+      // 4. 等待搜索结果加载
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
-        for (const el of friendElements) {
-          const text = el.textContent?.trim() || '';
+      // 5. 点击搜索结果中的好友(同时匹配名称和头像URL)
+      const clicked = await page.evaluate((name, expectedAvatarUrl) => {
+        // 找到所有好友/群聊元素
+        const allElements = Array.from(document.querySelectorAll('.recent-and-friend-panel-concat-item__friend'));
+        const allTexts = allElements.map(el => el.textContent?.trim() || '');
 
-          // 精确匹配好友昵称
-          if (text === name || text.includes(name)) {
-            (el as HTMLElement).click();
-            return { success: true, clickedText: text };
+        // 如果有头像URL,优先使用头像URL匹配
+        if (expectedAvatarUrl) {
+          for (const el of allElements) {
+            const text = el.textContent?.trim() || '';
+            const imgElement = el.querySelector('img');
+            const actualAvatarUrl = imgElement?.getAttribute('src') || '';
+
+            // 同时匹配名称和头像URL
+            if (text === name && actualAvatarUrl === expectedAvatarUrl) {
+              (el as HTMLElement).click();
+              return {
+                success: true,
+                clickedText: text,
+                matchType: 'exact-with-avatar',
+                debug: `精确匹配成功(名称+头像),共${allElements.length}个元素`
+              };
+            }
           }
         }
 
-        return { success: false, clickedText: '' };
-      }, friendName);
+        // 如果没有头像URL或头像匹配失败,尝试精确匹配名称
+        for (const el of allElements) {
+          const text = el.textContent?.trim() || '';
+
+          // 精确匹配好友昵称
+          if (text === name) {
+            (el as HTMLElement).click();
+            return {
+              success: true,
+              clickedText: text,
+              matchType: 'exact-name-only',
+              debug: `精确匹配成功(仅名称),共${allElements.length}个元素,所有元素: [${allTexts.join(', ')}]`
+            };
+          }
+        }
+
+        // 如果精确匹配失败,再尝试模糊匹配
+        for (const el of allElements) {
+          const text = el.textContent?.trim() || '';
+
+          // 模糊匹配
+          if (text.includes(name)) {
+            (el as HTMLElement).click();
+            return {
+              success: true,
+              clickedText: text,
+              matchType: 'fuzzy',
+              debug: `模糊匹配成功,共${allElements.length}个元素,所有元素: [${allTexts.join(', ')}]`
+            };
+          }
+        }
+
+        return {
+          success: false,
+          clickedText: '',
+          matchType: 'not-found',
+          debug: `未找到匹配的好友,共${allElements.length}个元素,所有元素: [${allTexts.join(', ')}]`
+        };
+      }, friendName, avatarUrl);
 
       if (clicked.success) {
         this.emitLog(`✅ 找到并点击好友: ${clicked.clickedText}`);
+        this.emitLog(`🐛 调试信息: ${clicked.debug}`);
         await new Promise(resolve => setTimeout(resolve, 1000));
         return true;
       } else {
         this.emitLog(`❌ 未找到好友: ${friendName}`);
+        this.emitLog(`🐛 调试信息: ${clicked.debug}`);
+        this.emitLog(`🐛 匹配类型: ${clicked.matchType}`);
         return false;
       }
     } catch (error) {
@@ -1050,11 +1288,21 @@ export class WechatReachService {
         }
       }, finalMessage);
 
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // ✅ 智能等待: 等待发送按钮可点击(最多2秒)
+      await page.waitForSelector('.send-btn:not([disabled])', { timeout: 2000 }).catch(() => {
+        this.emitLog(`⚠️ 发送按钮未在2秒内可点击,继续执行`);
+      });
 
       // 点击发送按钮
       await page.click('.send-btn');
-      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // ✅ 智能等待: 等待消息出现在聊天记录中(检测输入框是否已清空)
+      await page.waitForFunction(() => {
+        const editArea = document.querySelector('#editArea') as HTMLTextAreaElement;
+        return !editArea || editArea.value === '';
+      }, { timeout: 2000 }).catch(() => {
+        this.emitLog(`⚠️ 消息未在2秒内发送成功,继续执行`);
+      });
 
       this.emitLog(`✅ 文字消息已发送`);
       return true;
@@ -1179,9 +1427,10 @@ export class WechatReachService {
         for (const account of wechatAccounts) {
           if (!this.isRunning) break;
 
-          // 检查是否暂停
-          while (this.isPaused && this.isRunning) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+          // 🆕 检查是否暂停
+          if (this.isPaused) {
+            this.emitLog('⏸️ 任务已暂停,退出发送流程');
+            return; // 直接退出方法,保留currentTaskParams
           }
 
           // 检查是否在禁发时间段内
@@ -1239,37 +1488,127 @@ export class WechatReachService {
   }
 
   /**
-   * 暂停任务
+   * 暂停任务 (升级版: 关闭浏览器释放账号)
    */
-  pauseTask(): void {
+  async pauseTask(): Promise<void> {
     this.isPaused = true;
-    this.emitLog('⏸️ 任务已暂停');
+    this.emitLog('⏸️ 任务暂停中...');
+
+    // 关闭浏览器,释放堆雪球账号
+    try {
+      if (this.currentPage) {
+        await this.currentPage.close();
+        this.currentPage = null;
+        this.emitLog('✅ 已关闭页面');
+      }
+      if (this.currentBrowser) {
+        await this.currentBrowser.close();
+        this.currentBrowser = null;
+        this.emitLog('✅ 已关闭浏览器,堆雪球账号已释放');
+      }
+    } catch (error) {
+      this.emitLog(`⚠️ 关闭浏览器时出错: ${error.message}`);
+    }
+
+    this.emitLog('⏸️ 任务已暂停,您现在可以在其他地方登录堆雪球');
+    this.emitLog('💡 点击"继续"按钮可重新登录并继续发送剩余好友');
   }
 
   /**
-   * 恢复任务
+   * 恢复任务 (升级版: 重新调用发送方法,从断点继续)
    */
-  resumeTask(): void {
+  async resumeTask(): Promise<void> {
+    if (!this.isPaused) {
+      this.emitLog('⚠️ 任务未暂停,无需恢复');
+      return;
+    }
+
+    if (!this.currentTaskParams) {
+      this.emitLog('❌ 无法恢复任务: 未找到任务参数');
+      this.emitLog('💡 请重新发起发送任务,系统会自动跳过已发送的好友');
+      return;
+    }
+
+    this.emitLog('▶️ 恢复任务中...');
+    this.emitLog(`📋 任务类型: ${this.currentTaskParams.taskType || 'private'}`);
+
+    // 🐛 调试:打印任务参数
+    this.emitLog(`🐛 任务参数: ${JSON.stringify(this.currentTaskParams)}`);
+
+    // 🆕 取消暂停状态,并重置isRunning标志(允许重新启动任务)
     this.isPaused = false;
-    this.emitLog('▶️ 任务已恢复');
+    this.isRunning = false;
+
+    this.emitLog('✅ 任务已恢复,正在重新登录堆雪球并继续发送...');
+
+    // 🆕 根据任务类型调用不同的方法
+    try {
+      if (this.currentTaskParams.taskType === 'combined') {
+        // 组合消息任务
+        this.emitLog(`🐛 准备调用startCombinedReachTask`);
+        const { contents, targetDays, userId, taskId, forbiddenTimeRanges, selectedWechatAccountIndexes, selectedFriendIds } = this.currentTaskParams;
+        this.emitLog(`🐛 userId=${userId}`);
+        this.startCombinedReachTask(
+          contents,
+          targetDays,
+          userId,
+          taskId,
+          forbiddenTimeRanges,
+          selectedWechatAccountIndexes,
+          selectedFriendIds
+        ).catch(error => {
+          this.logger.error('恢复组合消息任务失败:', error);
+          this.emitLog(`❌ 恢复任务失败: ${error.message}`);
+        });
+      } else {
+        // 私聊消息任务
+        this.sendPrivateMessages(this.currentTaskParams).catch(error => {
+          this.logger.error('恢复私聊消息任务失败:', error);
+          this.emitLog(`❌ 恢复任务失败: ${error.message}`);
+        });
+      }
+    } catch (error) {
+      this.logger.error('恢复任务失败:', error);
+      this.emitLog(`❌ 恢复任务失败: ${error.message}`);
+    }
   }
 
   /**
    * 停止任务
    */
-  stopTask(): void {
+  async stopTask(): Promise<void> {
     this.isRunning = false;
     this.isPaused = false;
+    this.emitLog('⏹️ 任务停止中...');
+
+    // 关闭浏览器
+    try {
+      if (this.currentPage) {
+        await this.currentPage.close();
+        this.currentPage = null;
+      }
+      if (this.currentBrowser) {
+        await this.currentBrowser.close();
+        this.currentBrowser = null;
+      }
+    } catch (error) {
+      this.emitLog(`⚠️ 关闭浏览器时出错: ${error.message}`);
+    }
+
+    // 清空任务参数
+    this.currentTaskParams = null;
+
     this.emitLog('⏹️ 任务已停止');
   }
 
   /**
    * 获取任务状态
    */
-  getTaskStatus(): { isRunning: boolean; isPaused: boolean } {
+  getTaskStatus(): { isRunning: boolean; isPaused: boolean; hasTaskParams: boolean } {
     return {
       isRunning: this.isRunning,
-      isPaused: this.isPaused
+      isPaused: this.isPaused,
+      hasTaskParams: !!this.currentTaskParams
     };
   }
 
@@ -1280,13 +1619,14 @@ export class WechatReachService {
     page: puppeteer.Page,
     friendName: string,
     materialId: number,
+    userId?: string,
     additionalMessage?: string
   ): Promise<boolean> {
     try {
       this.emitLog(`📹 开始发送视频号给: ${friendName}`);
 
       // 1. 搜索并点击好友打开聊天窗口(使用搜索方式,更快)
-      const friendFound = await this.searchAndClickFriend(page, friendName);
+      const friendFound = await this.searchAndClickFriend(page, friendName, userId);
       if (!friendFound) {
         throw new Error(`未找到好友: ${friendName}`);
       }
@@ -1372,71 +1712,120 @@ export class WechatReachService {
       await new Promise(resolve => setTimeout(resolve, 3000));
 
       // 5.1 获取素材信息（从数据库）
-      const { data: material } = await this.supabaseService.getClient()
+      let query = this.supabaseService.getClient()
         .from('duixueqiu_video_materials')
         .select('*')
-        .eq('id', materialId)
-        .single();
+        .eq('id', materialId);
+
+      // 如果提供了userId,则添加user_id条件
+      if (userId) {
+        query = query.eq('user_id', userId);
+      }
+
+      const { data: material } = await query.single();
 
       if (!material) {
         throw new Error('素材不存在');
       }
 
       this.emitLog(`📋 素材信息: ${material.author_name} - ${material.content_desc?.substring(0, 30)}...`);
-      this.emitLog(`📍 素材位置: 第${material.page_number}页, 索引${material.material_index}`);
+      this.emitLog(`🖼️ 素材缩略图: ${material.thumbnail_url?.substring(0, 50)}...`);
 
-      // 6. 如果素材不在第1页，需要翻页
-      if (material.page_number > 1) {
-        for (let i = 1; i < material.page_number; i++) {
-          await page.evaluate(() => {
-            const buttons = document.querySelectorAll('button');
-            for (const button of buttons) {
-              if (button.textContent?.includes('下一页')) {
-                (button as HTMLElement).click();
-                break;
+      // 6. 遍历所有页,根据缩略图URL匹配素材
+      this.emitLog(`🔍 开始搜索匹配的素材(通过缩略图URL)...`);
+
+      let foundMaterial = false;
+      let currentPage = 1;
+      const maxPages = 10; // 最多翻10页
+
+      while (!foundMaterial && currentPage <= maxPages) {
+        this.emitLog(`📄 搜索第 ${currentPage} 页...`);
+
+        // 等待素材加载
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        // 在当前页查找匹配的素材
+        const matchResult = await page.evaluate((targetThumbnail) => {
+          const materialCards = document.querySelectorAll('.materials-link-wrap');
+
+          for (let i = 0; i < materialCards.length; i++) {
+            const card = materialCards[i];
+
+            // 获取缩略图URL
+            const imgElement = card.querySelector('[class*="img-wrap"] img');
+            const thumbnailUrl = imgElement?.getAttribute('src') || '';
+
+            // 匹配缩略图URL
+            if (thumbnailUrl === targetThumbnail) {
+              // 找到匹配的素材,点击对号图标
+              const confirmIcons = document.querySelectorAll('.confirm-icon');
+              if (confirmIcons[i]) {
+                (confirmIcons[i] as HTMLElement).click();
+
+                // 获取作者名和描述用于日志
+                const titleElement = card.querySelector('[class*="text-title"]');
+                const authorName = titleElement?.getAttribute('title') || '';
+                const descElement = card.querySelector('[class*="text-desc"]');
+                const contentDesc = descElement?.textContent?.trim() || '';
+
+                return {
+                  found: true,
+                  index: i,
+                  author: authorName,
+                  desc: contentDesc.substring(0, 30),
+                  thumbnail: thumbnailUrl.substring(0, 50)
+                };
               }
             }
+          }
+
+          return { found: false, totalCards: materialCards.length };
+        }, material.thumbnail_url);
+
+        if (matchResult.found) {
+          this.emitLog(`✅ 找到匹配的素材: ${matchResult.author} - ${matchResult.desc}...`);
+          this.emitLog(`📍 素材位置: 第${currentPage}页, 索引${matchResult.index}`);
+          this.emitLog(`🖼️ 缩略图匹配: ${matchResult.thumbnail}...`);
+          foundMaterial = true;
+          break;
+        } else {
+          this.emitLog(`⚠️ 第${currentPage}页未找到匹配素材 (共${matchResult.totalCards}个素材)`);
+
+          // 检查是否有下一页
+          const hasNext = await page.evaluate(() => {
+            const buttons = document.querySelectorAll('button');
+            for (const button of buttons) {
+              if (button.textContent?.includes('下一页') && !button.hasAttribute('disabled')) {
+                return true;
+              }
+            }
+            return false;
           });
-          await new Promise(resolve => setTimeout(resolve, 1500));
+
+          if (hasNext) {
+            // 点击下一页
+            await page.evaluate(() => {
+              const buttons = document.querySelectorAll('button');
+              for (const button of buttons) {
+                if (button.textContent?.includes('下一页')) {
+                  (button as HTMLElement).click();
+                  break;
+                }
+              }
+            });
+            currentPage++;
+          } else {
+            break;
+          }
         }
       }
 
-      // 7. 点击第N个素材的对号图标(confirm-icon)
-      this.emitLog(`📌 点击第 ${material.material_index + 1} 个素材的对号图标...`);
-
-      // 7.1 先检查页面上有多少个对号图标
-      const debugInfo = await page.evaluate(() => {
-        return {
-          confirmIconCount: document.querySelectorAll('.confirm-icon').length,
-          materialsLinkWrapCount: document.querySelectorAll('.materials-link-wrap').length,
-          allMaterialClasses: Array.from(document.querySelectorAll('[class*="material"]'))
-            .slice(0, 5)
-            .map(el => el.className),
-        };
-      });
-
-      this.emitLog(`🔍 调试信息: confirm-icon=${debugInfo.confirmIconCount}, materials-link-wrap=${debugInfo.materialsLinkWrapCount}`);
-      this.emitLog(`� 素材相关class: ${JSON.stringify(debugInfo.allMaterialClasses)}`);
-
-      const clicked = await page.evaluate((index) => {
-        // 查找所有对号图标
-        const confirmIcons = document.querySelectorAll('.confirm-icon');
-        console.log(`找到 ${confirmIcons.length} 个对号图标`);
-
-        if (confirmIcons[index]) {
-          console.log(`点击第 ${index + 1} 个对号图标`);
-          (confirmIcons[index] as HTMLElement).click();
-          return { success: true, count: confirmIcons.length };
-        }
-
-        return { success: false, count: confirmIcons.length };
-      }, material.material_index);
-
-      if (!clicked.success) {
-        throw new Error(`未找到第 ${material.material_index + 1} 个对号图标 (页面上共有 ${clicked.count} 个)`);
+      if (!foundMaterial) {
+        throw new Error(`未找到匹配的素材(缩略图URL): ${material.thumbnail_url?.substring(0, 50)}...`);
       }
 
-      this.emitLog(`✅ 已点击对号图标 (页面上共 ${clicked.count} 个)`);
+      // 7. 素材已在上面的循环中点击,这里不需要再点击
+      this.emitLog(`✅ 已点击匹配的素材对号图标`);
       await new Promise(resolve => setTimeout(resolve, 500));
 
       // 8. 点击底部的"确定"按钮(点击后自动发送视频号卡片)
@@ -1507,13 +1896,22 @@ export class WechatReachService {
     try {
       // 1. 点击"素材"按钮
       await page.click('[title="素材"]');
-      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // ✅ 智能等待: 等待素材菜单出现
+      await page.waitForFunction(() => {
+        const allSpans = document.querySelectorAll('span');
+        for (const span of allSpans) {
+          if (span.textContent && span.textContent.trim() === '视频号素材') {
+            return true;
+          }
+        }
+        return false;
+      }, { timeout: 3000 }).catch(() => {
+        this.emitLog(`⚠️ 视频号素材菜单未在3秒内出现`);
+      });
 
       // 2. 点击"视频号素材" - 使用鼠标模拟点击
       this.emitLog('📹 点击"视频号素材"选项...');
-
-      // 等待素材菜单完全展开
-      await new Promise(resolve => setTimeout(resolve, 2000));
 
       // 获取"视频号素材"元素的屏幕坐标
       const videoMaterialPosition = await page.evaluate(() => {
@@ -1538,13 +1936,22 @@ export class WechatReachService {
 
       // 移动鼠标到元素位置并点击
       await page.mouse.move(videoMaterialPosition.x, videoMaterialPosition.y);
-      await new Promise(resolve => setTimeout(resolve, 500));
       await page.mouse.click(videoMaterialPosition.x, videoMaterialPosition.y);
 
       this.emitLog('✅ 已点击"视频号素材"选项');
 
-      // 等待素材库对话框打开
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // ✅ 智能等待: 等待素材库对话框打开(等待树节点出现)
+      await page.waitForFunction(() => {
+        const treeLabels = document.querySelectorAll('.el-tree-node__label');
+        for (const label of treeLabels) {
+          if (label.textContent?.trim() === '公共素材分组') {
+            return true;
+          }
+        }
+        return false;
+      }, { timeout: 5000 }).catch(() => {
+        this.emitLog(`⚠️ 素材库对话框未在5秒内打开`);
+      });
 
       // 3. 点击"公共素材分组"展开
       this.emitLog('📁 点击"公共素材分组"展开素材列表...');
@@ -1566,8 +1973,10 @@ export class WechatReachService {
 
       this.emitLog(`✅ 已点击"公共素材分组"`);
 
-      // 4. 等待素材列表加载完成
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // ✅ 智能等待: 等待素材列表加载完成(等待素材卡片出现)
+      await page.waitForSelector('.materials-link-wrap', { timeout: 5000 }).catch(() => {
+        this.emitLog(`⚠️ 素材列表未在5秒内加载`);
+      });
 
       // 5. 获取素材信息（从数据库）
       const { data: material } = await this.supabaseService.getClient()
@@ -1581,42 +1990,92 @@ export class WechatReachService {
       }
 
       this.emitLog(`📋 素材信息: ${material.author_name} - ${material.content_desc?.substring(0, 30)}...`);
-      this.emitLog(`📍 素材位置: 第${material.page_number}页, 索引${material.material_index}`);
+      this.emitLog(`🖼️ 素材缩略图: ${material.thumbnail_url?.substring(0, 50)}...`);
 
-      // 6. 如果素材不在第1页，需要翻页
-      if (material.page_number > 1) {
-        for (let i = 1; i < material.page_number; i++) {
-          await page.evaluate(() => {
-            const buttons = document.querySelectorAll('button');
-            for (const button of buttons) {
-              if (button.textContent?.includes('下一页')) {
-                (button as HTMLElement).click();
-                break;
+      // 6. 遍历所有页,根据缩略图URL匹配素材
+      this.emitLog(`🔍 开始搜索匹配的素材(通过缩略图URL)...`);
+
+      let foundMaterial = false;
+      let currentPage = 1;
+      const maxPages = 10;
+
+      while (!foundMaterial && currentPage <= maxPages) {
+        this.emitLog(`📄 搜索第 ${currentPage} 页...`);
+
+        // ✅ 智能等待: 等待当前页素材加载完成
+        await page.waitForSelector('.materials-link-wrap', { timeout: 3000 }).catch(() => {
+          this.emitLog(`⚠️ 第${currentPage}页素材未在3秒内加载`);
+        });
+
+        const matchResult = await page.evaluate((targetThumbnail) => {
+          const materialCards = document.querySelectorAll('.materials-link-wrap');
+
+          for (let i = 0; i < materialCards.length; i++) {
+            const card = materialCards[i];
+
+            // 获取缩略图URL
+            const imgElement = card.querySelector('[class*="img-wrap"] img');
+            const thumbnailUrl = imgElement?.getAttribute('src') || '';
+
+            // 匹配缩略图URL
+            if (thumbnailUrl === targetThumbnail) {
+              const confirmIcons = document.querySelectorAll('.confirm-icon');
+              if (confirmIcons[i]) {
+                (confirmIcons[i] as HTMLElement).click();
+
+                // 获取作者名和描述用于日志
+                const titleElement = card.querySelector('[class*="text-title"]');
+                const authorName = titleElement?.getAttribute('title') || '';
+                const descElement = card.querySelector('[class*="text-desc"]');
+                const contentDesc = descElement?.textContent?.trim() || '';
+
+                return { found: true, index: i, author: authorName, desc: contentDesc.substring(0, 30), thumbnail: thumbnailUrl.substring(0, 50) };
               }
             }
+          }
+          return { found: false, totalCards: materialCards.length };
+        }, material.thumbnail_url);
+
+        if (matchResult.found) {
+          this.emitLog(`✅ 找到匹配的素材: ${matchResult.author} - ${matchResult.desc}...`);
+          this.emitLog(`🖼️ 缩略图匹配: ${matchResult.thumbnail}...`);
+          foundMaterial = true;
+          break;
+        } else {
+          this.emitLog(`⚠️ 第${currentPage}页未找到匹配素材 (共${matchResult.totalCards}个素材)`);
+
+          const hasNext = await page.evaluate(() => {
+            const buttons = document.querySelectorAll('button');
+            for (const button of buttons) {
+              if (button.textContent?.includes('下一页') && !button.hasAttribute('disabled')) {
+                return true;
+              }
+            }
+            return false;
           });
-          await new Promise(resolve => setTimeout(resolve, 1500));
+
+          if (hasNext) {
+            await page.evaluate(() => {
+              const buttons = document.querySelectorAll('button');
+              for (const button of buttons) {
+                if (button.textContent?.includes('下一页')) {
+                  (button as HTMLElement).click();
+                  break;
+                }
+              }
+            });
+            currentPage++;
+          } else {
+            break;
+          }
         }
       }
 
-      // 7. 点击第N个素材的对号图标
-      this.emitLog(`📌 点击第 ${material.material_index + 1} 个素材的对号图标...`);
-
-      const clicked = await page.evaluate((index) => {
-        const confirmIcons = document.querySelectorAll('.confirm-icon');
-        if (confirmIcons[index]) {
-          (confirmIcons[index] as HTMLElement).click();
-          return { success: true, count: confirmIcons.length };
-        }
-        return { success: false, count: confirmIcons.length };
-      }, material.material_index);
-
-      if (!clicked.success) {
-        throw new Error(`未找到第 ${material.material_index + 1} 个对号图标`);
+      if (!foundMaterial) {
+        throw new Error(`未找到匹配的素材(缩略图URL): ${material.thumbnail_url?.substring(0, 50)}...`);
       }
 
-      this.emitLog(`✅ 已点击对号图标`);
-      await new Promise(resolve => setTimeout(resolve, 500));
+      this.emitLog(`✅ 已点击匹配的素材对号图标`);
 
       // 8. 点击底部的"确定"按钮
       this.emitLog(`🔘 点击确定按钮...`);
@@ -1638,7 +2097,15 @@ export class WechatReachService {
         this.emitLog(`✅ 已点击确定按钮`);
       }
 
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // ✅ 智能等待: 等待对话框消失(最多3秒)
+      await page.waitForFunction(() => {
+        const dialogs = document.querySelectorAll('.el-dialog__wrapper');
+        return dialogs.length === 0 || Array.from(dialogs).every(d =>
+          (d as HTMLElement).style.display === 'none'
+        );
+      }, { timeout: 3000 }).catch(() => {
+        this.emitLog(`⚠️ 对话框未在3秒内消失,继续执行`);
+      });
 
       this.emitLog(`✅ 视频号素材已发送`);
       return true;
@@ -1657,13 +2124,14 @@ export class WechatReachService {
     page: puppeteer.Page,
     friendName: string,
     materialId: number,
+    userId?: string,
     additionalMessage?: string
   ): Promise<boolean> {
     try {
       this.emitLog(`🔗 开始发送链接给: ${friendName}`);
 
       // 1. 搜索并点击好友打开聊天窗口(使用搜索方式,更快)
-      const friendFound = await this.searchAndClickFriend(page, friendName);
+      const friendFound = await this.searchAndClickFriend(page, friendName, userId);
       if (!friendFound) {
         throw new Error(`未找到好友: ${friendName}`);
       }
@@ -1766,60 +2234,83 @@ export class WechatReachService {
       }
 
       this.emitLog(`📋 素材信息: ${material.title?.substring(0, 50)}...`);
-      this.emitLog(`📍 素材位置: 第${material.page_number}页, 索引${material.material_index}`);
 
-      // 6. 如果素材不在第1页，需要翻页
-      if (material.page_number > 1) {
-        for (let i = 1; i < material.page_number; i++) {
-          await page.evaluate(() => {
-            const buttons = document.querySelectorAll('button');
-            for (const button of buttons) {
-              if (button.textContent?.includes('下一页')) {
-                (button as HTMLElement).click();
-                break;
+      // 6. 遍历所有页,根据标题和公众号名称匹配素材
+      this.emitLog(`🔍 开始搜索匹配的链接素材...`);
+
+      let foundMaterial = false;
+      let currentPage = 1;
+      const maxPages = 10;
+
+      while (!foundMaterial && currentPage <= maxPages) {
+        this.emitLog(`📄 搜索第 ${currentPage} 页...`);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        const matchResult = await page.evaluate((targetTitle, targetAccount) => {
+          const materialCards = document.querySelectorAll('.materials-link-wrap');
+
+          for (let i = 0; i < materialCards.length; i++) {
+            const card = materialCards[i];
+
+            // 获取标题
+            const titleElement = card.querySelector('[class*="text-title"]');
+            const title = titleElement?.getAttribute('title') || titleElement?.textContent?.trim() || '';
+
+            // 获取公众号名称
+            const accountElement = card.querySelector('[class*="text-desc"]');
+            const accountName = accountElement?.textContent?.trim() || '';
+
+            // 匹配标题和公众号名称
+            if (title === targetTitle && accountName === targetAccount) {
+              const confirmIcons = document.querySelectorAll('.confirm-icon');
+              if (confirmIcons[i]) {
+                (confirmIcons[i] as HTMLElement).click();
+                return { found: true, index: i, title: title.substring(0, 30), account: accountName };
               }
             }
+          }
+          return { found: false, totalCards: materialCards.length };
+        }, material.title, material.account_name);
+
+        if (matchResult.found) {
+          this.emitLog(`✅ 找到匹配的链接素材: ${matchResult.title}... (${matchResult.account})`);
+          foundMaterial = true;
+          break;
+        } else {
+          this.emitLog(`⚠️ 第${currentPage}页未找到匹配素材 (共${matchResult.totalCards}个素材)`);
+
+          const hasNext = await page.evaluate(() => {
+            const buttons = document.querySelectorAll('button');
+            for (const button of buttons) {
+              if (button.textContent?.includes('下一页') && !button.hasAttribute('disabled')) {
+                return true;
+              }
+            }
+            return false;
           });
-          await new Promise(resolve => setTimeout(resolve, 1500));
+
+          if (hasNext) {
+            await page.evaluate(() => {
+              const buttons = document.querySelectorAll('button');
+              for (const button of buttons) {
+                if (button.textContent?.includes('下一页')) {
+                  (button as HTMLElement).click();
+                  break;
+                }
+              }
+            });
+            currentPage++;
+          } else {
+            break;
+          }
         }
       }
 
-      // 7. 点击第N个素材的对号图标(confirm-icon)
-      this.emitLog(`📌 点击第 ${material.material_index + 1} 个素材的对号图标...`);
-
-      // 7.1 先检查页面上有多少个对号图标
-      const debugInfo = await page.evaluate(() => {
-        return {
-          confirmIconCount: document.querySelectorAll('.confirm-icon').length,
-          materialsLinkWrapCount: document.querySelectorAll('.materials-link-wrap').length,
-          allMaterialClasses: Array.from(document.querySelectorAll('[class*="material"]'))
-            .slice(0, 5)
-            .map(el => el.className),
-        };
-      });
-
-      this.emitLog(`🔍 调试信息: confirm-icon=${debugInfo.confirmIconCount}, materials-link-wrap=${debugInfo.materialsLinkWrapCount}`);
-      this.emitLog(`📦 素材相关class: ${JSON.stringify(debugInfo.allMaterialClasses)}`);
-
-      const clicked = await page.evaluate((index) => {
-        // 查找所有对号图标
-        const confirmIcons = document.querySelectorAll('.confirm-icon');
-        console.log(`找到 ${confirmIcons.length} 个对号图标`);
-
-        if (confirmIcons[index]) {
-          console.log(`点击第 ${index + 1} 个对号图标`);
-          (confirmIcons[index] as HTMLElement).click();
-          return { success: true, count: confirmIcons.length };
-        }
-
-        return { success: false, count: confirmIcons.length };
-      }, material.material_index);
-
-      if (!clicked.success) {
-        throw new Error(`未找到第 ${material.material_index + 1} 个对号图标 (页面上共有 ${clicked.count} 个)`);
+      if (!foundMaterial) {
+        throw new Error(`未找到匹配的链接素材: ${material.title?.substring(0, 30)}... (${material.account_name})`);
       }
 
-      this.emitLog(`✅ 已点击对号图标 (页面上共 ${clicked.count} 个)`);
+      this.emitLog(`✅ 已点击匹配的链接素材对号图标`);
       await new Promise(resolve => setTimeout(resolve, 500));
 
       // 8. 点击底部的"确定"按钮(点击后自动发送链接卡片)
@@ -1964,41 +2455,78 @@ export class WechatReachService {
       }
 
       this.emitLog(`📋 素材信息: ${material.title?.substring(0, 50)}...`);
-      this.emitLog(`📍 素材位置: 第${material.page_number}页, 索引${material.material_index}`);
 
-      // 6. 如果素材不在第1页，需要翻页
-      if (material.page_number > 1) {
-        for (let i = 1; i < material.page_number; i++) {
-          await page.evaluate(() => {
-            const buttons = document.querySelectorAll('button');
-            for (const button of buttons) {
-              if (button.textContent?.includes('下一页')) {
-                (button as HTMLElement).click();
-                break;
+      // 6. 遍历所有页,根据标题和公众号名称匹配素材
+      this.emitLog(`🔍 开始搜索匹配的链接素材...`);
+
+      let foundMaterial = false;
+      let currentPage = 1;
+      const maxPages = 10;
+
+      while (!foundMaterial && currentPage <= maxPages) {
+        this.emitLog(`📄 搜索第 ${currentPage} 页...`);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        const matchResult = await page.evaluate((targetTitle, targetAccount) => {
+          const materialCards = document.querySelectorAll('.materials-link-wrap');
+
+          for (let i = 0; i < materialCards.length; i++) {
+            const card = materialCards[i];
+            const titleElement = card.querySelector('[class*="text-title"]');
+            const title = titleElement?.getAttribute('title') || titleElement?.textContent?.trim() || '';
+            const accountElement = card.querySelector('[class*="text-desc"]');
+            const accountName = accountElement?.textContent?.trim() || '';
+
+            if (title === targetTitle && accountName === targetAccount) {
+              const confirmIcons = document.querySelectorAll('.confirm-icon');
+              if (confirmIcons[i]) {
+                (confirmIcons[i] as HTMLElement).click();
+                return { found: true, index: i, title: title.substring(0, 30), account: accountName };
               }
             }
+          }
+          return { found: false, totalCards: materialCards.length };
+        }, material.title, material.account_name);
+
+        if (matchResult.found) {
+          this.emitLog(`✅ 找到匹配的链接素材: ${matchResult.title}... (${matchResult.account})`);
+          foundMaterial = true;
+          break;
+        } else {
+          this.emitLog(`⚠️ 第${currentPage}页未找到匹配素材 (共${matchResult.totalCards}个素材)`);
+
+          const hasNext = await page.evaluate(() => {
+            const buttons = document.querySelectorAll('button');
+            for (const button of buttons) {
+              if (button.textContent?.includes('下一页') && !button.hasAttribute('disabled')) {
+                return true;
+              }
+            }
+            return false;
           });
-          await new Promise(resolve => setTimeout(resolve, 1500));
+
+          if (hasNext) {
+            await page.evaluate(() => {
+              const buttons = document.querySelectorAll('button');
+              for (const button of buttons) {
+                if (button.textContent?.includes('下一页')) {
+                  (button as HTMLElement).click();
+                  break;
+                }
+              }
+            });
+            currentPage++;
+          } else {
+            break;
+          }
         }
       }
 
-      // 7. 点击第N个素材的对号图标
-      this.emitLog(`📌 点击第 ${material.material_index + 1} 个素材的对号图标...`);
-
-      const clicked = await page.evaluate((index) => {
-        const confirmIcons = document.querySelectorAll('.confirm-icon');
-        if (confirmIcons[index]) {
-          (confirmIcons[index] as HTMLElement).click();
-          return { success: true, count: confirmIcons.length };
-        }
-        return { success: false, count: confirmIcons.length };
-      }, material.material_index);
-
-      if (!clicked.success) {
-        throw new Error(`未找到第 ${material.material_index + 1} 个对号图标`);
+      if (!foundMaterial) {
+        throw new Error(`未找到匹配的链接素材: ${material.title?.substring(0, 30)}... (${material.account_name})`);
       }
 
-      this.emitLog(`✅ 已点击对号图标`);
+      this.emitLog(`✅ 已点击匹配的链接素材对号图标`);
       await new Promise(resolve => setTimeout(resolve, 500));
 
       // 8. 点击底部的"确定"按钮
@@ -2223,26 +2751,43 @@ export class WechatReachService {
    * @param friendName 好友昵称
    * @param contents 内容配置数组
    */
+  /**
+   * 组合发送多种内容类型
+   * @param page Puppeteer页面对象
+   * @param friendName 好友昵称
+   * @param friendId 好友ID(用于记录发送历史)
+   * @param contents 内容配置数组
+   * @param userId 用户ID
+   */
   private async sendCombinedContents(
     page: puppeteer.Page,
     friendName: string,
+    friendId: number,
     contents: Array<{
       type: 'text' | 'video' | 'link' | 'image';
       message?: string;
       materialId?: number;
       imageUrls?: string[];
-    }>
+    }>,
+    userId: string
   ): Promise<boolean> {
     try {
+      // 🐛 调试日志:打印接收到的参数
+      this.logger.log(`🐛 sendCombinedContents接收参数: friendName=${friendName}, friendId=${friendId}, userId=${userId}`);
+
       this.emitLog(`🎯 开始组合发送给: ${friendName}`);
 
       // 1. 先搜索并打开聊天窗口(只打开一次)
       this.emitLog(`👤 搜索并打开聊天窗口: ${friendName}`);
-      const friendFound = await this.searchAndClickFriend(page, friendName);
+      const friendFound = await this.searchAndClickFriend(page, friendName, userId);
       if (!friendFound) {
         throw new Error(`未找到好友: ${friendName}`);
       }
-      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // ✅ 智能等待: 等待输入框出现(最多3秒)
+      await page.waitForSelector('#editArea', { timeout: 3000 }).catch(() => {
+        this.emitLog(`⚠️ 输入框未在3秒内出现,继续执行`);
+      });
 
       // 2. 按照优先级排序: 文字优先,其他的无所谓
       const sortedContents = [...contents].sort((a, b) => {
@@ -2252,54 +2797,106 @@ export class WechatReachService {
       });
 
       // 3. 逐个发送(不再重新打开聊天窗口)
+      let successCount = 0;
       for (let i = 0; i < sortedContents.length; i++) {
         const content = sortedContents[i];
 
+        // 🆕 构造该类型的消息内容对象
+        let messageContentObj: any;
+        switch (content.type) {
+          case 'text':
+            messageContentObj = { text: content.message };
+            break;
+          case 'video':
+            messageContentObj = { materialId: content.materialId };
+            break;
+          case 'link':
+            messageContentObj = { materialId: content.materialId };
+            break;
+          case 'image':
+            messageContentObj = { imageUrls: content.imageUrls };
+            break;
+        }
+
+        // 🆕 检查该类型是否已发送过
+        const alreadySent = await this.checkMessageSent(
+          userId,
+          friendId,
+          content.type,
+          messageContentObj
+        );
+
+        if (alreadySent) {
+          this.emitLog(`⏭️ 跳过${content.type}消息 (已发送过)`);
+          successCount++; // 已发送的也算成功
+          continue;
+        }
+
+        // 发送该类型的消息
+        let sendSuccess = false;
         switch (content.type) {
           case 'text':
             this.emitLog(`💬 发送文字消息...`);
             this.emitLog(`📝 文字消息内容长度: ${content.message?.length || 0}字符`);
             this.emitLog(`📝 文字消息前100字符: ${content.message?.substring(0, 100) || '(空)'}`);
-            const textSuccess = await this.sendMessageToFriendDirect(page, friendName, content.message);
-            if (!textSuccess) {
+            sendSuccess = await this.sendMessageToFriendDirect(page, friendName, content.message);
+            if (!sendSuccess) {
               this.emitLog(`⚠️ 文字消息发送失败,继续发送其他内容`);
             }
             break;
 
           case 'video':
             this.emitLog(`📹 发送视频号素材...`);
-            const videoSuccess = await this.sendVideoMaterialDirect(page, content.materialId);
-            if (!videoSuccess) {
+            sendSuccess = await this.sendVideoMaterialDirect(page, content.materialId);
+            if (!sendSuccess) {
               this.emitLog(`⚠️ 视频号素材发送失败,继续发送其他内容`);
             }
             break;
 
           case 'link':
             this.emitLog(`🔗 发送链接素材...`);
-            const linkSuccess = await this.sendLinkMaterialDirect(page, content.materialId);
-            if (!linkSuccess) {
+            sendSuccess = await this.sendLinkMaterialDirect(page, content.materialId);
+            if (!sendSuccess) {
               this.emitLog(`⚠️ 链接素材发送失败,继续发送其他内容`);
             }
             break;
 
           case 'image':
             this.emitLog(`🖼️ 发送图片...`);
-            const imageSuccess = await this.sendImageToFriend(page, friendName, content.imageUrls);
-            if (!imageSuccess) {
+            sendSuccess = await this.sendImageToFriend(page, friendName, content.imageUrls);
+            if (!sendSuccess) {
               this.emitLog(`⚠️ 图片发送失败,继续发送其他内容`);
             }
             break;
         }
 
-        // 每种类型之间间隔2秒
+        // 🆕 发送成功后,立即记录该类型的发送历史
+        if (sendSuccess) {
+          await this.recordMessageSent(
+            userId,
+            friendId,
+            friendName,
+            content.type,
+            messageContentObj
+          );
+          this.emitLog(`✅ ${content.type}消息已发送并记录`);
+          successCount++;
+        }
+
+        // ✅ 智能等待: 检测输入框是否准备好接收下一条消息
         if (i < sortedContents.length - 1) {
-          this.emitLog(`⏳ 等待2秒后发送下一个内容...`);
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          this.emitLog(`⏳ 智能检测: 等待输入框准备好...`);
+          await page.waitForFunction(() => {
+            const editArea = document.querySelector('#editArea') as HTMLTextAreaElement;
+            return editArea && editArea.value === '';
+          }, { timeout: 2000 }).catch(() => {
+            this.emitLog(`⚠️ 输入框未在2秒内准备好,继续执行`);
+          });
         }
       }
 
-      this.emitLog(`✅ 组合发送完成: ${friendName}`);
-      return true;
+      this.emitLog(`✅ 组合发送完成: ${friendName} (成功${successCount}/${sortedContents.length})`);
+      return successCount > 0; // 只要有一个成功就算成功
 
     } catch (error) {
       this.logger.error(`组合发送给 ${friendName} 失败: ${error.message}`);
@@ -2315,7 +2912,8 @@ export class WechatReachService {
     page: puppeteer.Page,
     friendName: string,
     textMessage: string,
-    materialId: number
+    materialId: number,
+    userId?: string
   ): Promise<boolean> {
     try {
       this.emitLog(`💬📹 开始组合发送给: ${friendName}`);
@@ -2464,68 +3062,105 @@ export class WechatReachService {
       this.emitLog(`   前10个素材相关元素: ${JSON.stringify(pageDebug.materialRelatedClasses, null, 2)}`);
 
       // 4.4.3 获取素材信息（从数据库）
-      const { data: material } = await this.supabaseService.getClient()
+      let query = this.supabaseService.getClient()
         .from('duixueqiu_video_materials')
         .select('*')
-        .eq('id', materialId)
-        .single();
+        .eq('id', materialId);
+
+      // 如果提供了userId,则添加user_id条件
+      if (userId) {
+        query = query.eq('user_id', userId);
+      }
+
+      const { data: material } = await query.single();
 
       if (!material) {
         throw new Error('素材不存在');
       }
 
-      // 4.5 如果素材不在第1页，需要翻页
-      if (material.page_number > 1) {
-        for (let i = 1; i < material.page_number; i++) {
-          await page.evaluate(() => {
-            const buttons = document.querySelectorAll('button');
-            for (const button of buttons) {
-              if (button.textContent?.includes('下一页')) {
-                (button as HTMLElement).click();
-                break;
+      this.emitLog(`📋 素材信息: ${material.author_name} - ${material.content_desc?.substring(0, 30)}...`);
+      this.emitLog(`🖼️ 素材缩略图: ${material.thumbnail_url?.substring(0, 50)}...`);
+
+      // 4.5 遍历所有页,根据缩略图URL匹配素材
+      this.emitLog(`🔍 开始搜索匹配的视频号素材(通过缩略图URL)...`);
+
+      let foundMaterial = false;
+      let currentPage = 1;
+      const maxPages = 10;
+
+      while (!foundMaterial && currentPage <= maxPages) {
+        this.emitLog(`📄 搜索第 ${currentPage} 页...`);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        const matchResult = await page.evaluate((targetThumbnail) => {
+          const materialCards = document.querySelectorAll('.materials-link-wrap');
+
+          for (let i = 0; i < materialCards.length; i++) {
+            const card = materialCards[i];
+
+            // 获取缩略图URL
+            const imgElement = card.querySelector('[class*="img-wrap"] img');
+            const thumbnailUrl = imgElement?.getAttribute('src') || '';
+
+            // 匹配缩略图URL
+            if (thumbnailUrl === targetThumbnail) {
+              const confirmIcons = document.querySelectorAll('.confirm-icon');
+              if (confirmIcons[i]) {
+                (confirmIcons[i] as HTMLElement).click();
+
+                // 获取作者名和描述用于日志
+                const titleElement = card.querySelector('[class*="text-title"]');
+                const authorName = titleElement?.getAttribute('title') || '';
+                const descElement = card.querySelector('[class*="text-desc"]');
+                const contentDesc = descElement?.textContent?.trim() || '';
+
+                return { found: true, index: i, author: authorName, desc: contentDesc.substring(0, 30), thumbnail: thumbnailUrl.substring(0, 50) };
               }
             }
+          }
+          return { found: false, totalCards: materialCards.length };
+        }, material.thumbnail_url);
+
+        if (matchResult.found) {
+          this.emitLog(`✅ 找到匹配的视频号素材: ${matchResult.author} - ${matchResult.desc}...`);
+          this.emitLog(`🖼️ 缩略图匹配: ${matchResult.thumbnail}...`);
+          foundMaterial = true;
+          break;
+        } else {
+          this.emitLog(`⚠️ 第${currentPage}页未找到匹配素材 (共${matchResult.totalCards}个素材)`);
+
+          const hasNext = await page.evaluate(() => {
+            const buttons = document.querySelectorAll('button');
+            for (const button of buttons) {
+              if (button.textContent?.includes('下一页') && !button.hasAttribute('disabled')) {
+                return true;
+              }
+            }
+            return false;
           });
-          await new Promise(resolve => setTimeout(resolve, 1500));
+
+          if (hasNext) {
+            await page.evaluate(() => {
+              const buttons = document.querySelectorAll('button');
+              for (const button of buttons) {
+                if (button.textContent?.includes('下一页')) {
+                  (button as HTMLElement).click();
+                  break;
+                }
+              }
+            });
+            currentPage++;
+          } else {
+            break;
+          }
         }
       }
 
-      // 4.6 点击第N个素材的对号图标(confirm-icon)
-      this.emitLog(`📌 点击第 ${material.material_index + 1} 个素材的对号图标...`);
-
-      // 4.6.1 先检查页面上有多少个对号图标
-      const debugInfo2 = await page.evaluate(() => {
-        return {
-          confirmIconCount: document.querySelectorAll('.confirm-icon').length,
-          materialsLinkWrapCount: document.querySelectorAll('.materials-link-wrap').length,
-          allMaterialClasses: Array.from(document.querySelectorAll('[class*="material"]'))
-            .slice(0, 5)
-            .map(el => el.className),
-        };
-      });
-
-      this.emitLog(`🔍 调试信息: confirm-icon=${debugInfo2.confirmIconCount}, materials-link-wrap=${debugInfo2.materialsLinkWrapCount}`);
-      this.emitLog(`� 素材相关class: ${JSON.stringify(debugInfo2.allMaterialClasses)}`);
-
-      const clicked = await page.evaluate((index) => {
-        // 查找所有对号图标
-        const confirmIcons = document.querySelectorAll('.confirm-icon');
-        console.log(`找到 ${confirmIcons.length} 个对号图标`);
-
-        if (confirmIcons[index]) {
-          console.log(`点击第 ${index + 1} 个对号图标`);
-          (confirmIcons[index] as HTMLElement).click();
-          return { success: true, count: confirmIcons.length };
-        }
-
-        return { success: false, count: confirmIcons.length };
-      }, material.material_index);
-
-      if (!clicked.success) {
-        throw new Error(`未找到第 ${material.material_index + 1} 个对号图标 (页面上共有 ${clicked.count} 个)`);
+      if (!foundMaterial) {
+        throw new Error(`未找到匹配的视频号素材(缩略图URL): ${material.thumbnail_url?.substring(0, 50)}...`);
       }
 
-      this.emitLog(`✅ 已点击对号图标 (页面上共 ${clicked.count} 个)`);
+      this.emitLog(`✅ 已点击匹配的视频号素材对号图标`);
       await new Promise(resolve => setTimeout(resolve, 500));
 
       // 4.7 点击底部的"确定"按钮(点击后自动发送视频号卡片)
@@ -2610,7 +3245,10 @@ export class WechatReachService {
     let page: puppeteer.Page = null;
 
     try {
+      // 记录任务开始时间
+      const startTime = new Date();
       this.emitLog('🚀 开始视频号批量发送任务');
+      this.emitLog(`⏰ 任务开始时间: ${startTime.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`);
       this.emitLog(`📹 素材ID: ${materialId}`);
       if (additionalMessage) {
         this.emitLog(`💬 附加文案: ${additionalMessage}`);
@@ -2689,6 +3327,7 @@ export class WechatReachService {
       // 开始发送
       let successCount = 0;
       let failCount = 0;
+      let skipCount = 0; // 跳过计数(重复消息)
 
       for (let i = 0; i < friends.length; i++) {
         // 检查是否停止
@@ -2697,9 +3336,10 @@ export class WechatReachService {
           break;
         }
 
-        // 检查是否暂停
-        while (this.isPaused) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
+        // 🆕 检查是否暂停
+        if (this.isPaused) {
+          this.emitLog('⏸️ 任务已暂停,退出发送流程');
+          return; // 直接退出方法,保留currentTaskParams
         }
 
         // 检查是否在禁发时间段内
@@ -2708,7 +3348,31 @@ export class WechatReachService {
         }
 
         const friend = friends[i];
-        this.emitLog(`[${i + 1}/${friends.length}] 发送给: ${friend.name}`);
+        const selectedFriend = selectedFriends[i]; // 获取完整的好友信息(包含friend_id)
+
+        this.emitLog(`[${i + 1}/${friends.length}] 准备发送给: ${friend.name}`);
+
+        // 检查是否已发送过相同消息
+        const messageContent = additionalMessage && additionalMessage.trim() !== ''
+          ? { materialId, additionalMessage } // 组合消息
+          : { materialId }; // 纯视频号消息
+
+        const messageType = additionalMessage && additionalMessage.trim() !== ''
+          ? 'combined'
+          : 'video';
+
+        const alreadySent = await this.checkMessageSent(
+          userId,
+          selectedFriend.id, // 使用好友的UUID
+          messageType,
+          messageContent
+        );
+
+        if (alreadySent) {
+          this.emitLog(`⏭️ 跳过好友: ${friend.name} (已发送过相同消息)`);
+          skipCount++;
+          continue; // 跳过这个好友
+        }
 
         // 根据是否有附加文案选择发送方式
         let success = false;
@@ -2718,7 +3382,8 @@ export class WechatReachService {
             page,
             friend.name,
             additionalMessage,
-            materialId
+            materialId,
+            userId
           );
         } else {
           // 无附加文案: 只发视频号
@@ -2726,12 +3391,22 @@ export class WechatReachService {
             page,
             friend.name,
             materialId,
+            userId,
             ''
           );
         }
 
         if (success) {
           successCount++;
+          // 记录发送历史
+          await this.recordMessageSent(
+            userId,
+            selectedFriend.id,
+            friend.name,
+            messageType,
+            messageContent,
+            taskId
+          );
         } else {
           failCount++;
         }
@@ -2752,9 +3427,23 @@ export class WechatReachService {
         }
       }
 
+      // 记录任务结束时间并计算耗时
+      const endTime = new Date();
+      const durationMs = endTime.getTime() - startTime.getTime();
+      const durationSeconds = Math.floor(durationMs / 1000);
+      const durationMinutes = Math.floor(durationSeconds / 60);
+      const remainingSeconds = durationSeconds % 60;
+
+      this.emitLog('');
       this.emitLog('🎉 任务完成!');
-      this.emitLog(`✅ 成功: ${successCount}人`);
-      this.emitLog(`❌ 失败: ${failCount}人`);
+      this.emitLog(`⏰ 任务结束时间: ${endTime.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`);
+      this.emitLog(`⏱️ 总耗时: ${durationMinutes}分${remainingSeconds}秒 (${durationSeconds}秒)`);
+      this.emitLog('');
+      this.emitLog('📊 发送统计:');
+      this.emitLog(`   ✅ 成功: ${successCount}人`);
+      this.emitLog(`   ⏭️ 跳过(重复): ${skipCount}人`);
+      this.emitLog(`   ❌ 失败: ${failCount}人`);
+      this.emitLog(`   📝 总计: ${friends.length}人`);
 
     } catch (error) {
       this.logger.error('视频号发送任务失败:', error);
@@ -2786,6 +3475,9 @@ export class WechatReachService {
     selectedWechatAccountIndexes?: number[],
     selectedFriendIds?: string[] // 新增: 选中的好友ID列表
   ): Promise<void> {
+    // 🐛 调试:通过WebSocket发送userId到前端
+    this.emitLog(`🐛 DEBUG: userId=${userId}, 类型=${typeof userId}`);
+
     if (this.isRunning) {
       throw new Error('已有任务正在运行中');
     }
@@ -2794,11 +3486,26 @@ export class WechatReachService {
     this.isPaused = false;
     this.currentTaskId = taskId;
 
+    // 🆕 保存任务参数,用于暂停后继续
+    this.currentTaskParams = {
+      taskType: 'combined',
+      contents,
+      targetDays,
+      userId,
+      taskId,
+      forbiddenTimeRanges,
+      selectedWechatAccountIndexes,
+      selectedFriendIds
+    };
+
     let browser: puppeteer.Browser = null;
     let page: puppeteer.Page = null;
 
     try {
+      // 记录任务开始时间
+      const startTime = new Date();
       this.emitLog('🚀 开始组合发送任务');
+      this.emitLog(`⏰ 任务开始时间: ${startTime.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`);
       this.emitLog(`📋 内容类型: ${contents.map(c => c.type).join(', ')}`);
       this.emitLog(`⏰ 目标完成时间: ${targetDays}天`);
 
@@ -2893,17 +3600,35 @@ export class WechatReachService {
         // 如果前端传递了好友ID列表,使用这个列表
         this.emitLog(`📋 使用前端传递的好友ID列表 (${selectedFriendIds.length}个)`);
 
-        const { data, error } = await this.supabaseService.getClient()
-          .from('duixueqiu_friends')
-          .select('*')
-          .eq('user_id', userId)
-          .in('id', selectedFriendIds);
-
-        if (error) {
-          throw new Error(`获取好友信息失败: ${error.message}`);
+        // Supabase的.in()方法有限制,通常不能超过1000个值
+        // 所以需要分批查询
+        const batchSize = 1000;
+        const batches = [];
+        for (let i = 0; i < selectedFriendIds.length; i += batchSize) {
+          batches.push(selectedFriendIds.slice(i, i + batchSize));
         }
 
-        selectedFriends = data || [];
+        this.emitLog(`📋 分成 ${batches.length} 批查询,每批最多 ${batchSize} 个好友`);
+
+        selectedFriends = [];
+        for (let i = 0; i < batches.length; i++) {
+          const batch = batches[i];
+          this.emitLog(`📋 查询第 ${i + 1}/${batches.length} 批 (${batch.length}个好友)...`);
+
+          const { data, error } = await this.supabaseService.getClient()
+            .from('duixueqiu_friends')
+            .select('*')
+            .eq('user_id', userId)
+            .in('id', batch);
+
+          if (error) {
+            throw new Error(`获取好友信息失败(第${i + 1}批): ${error.message}`);
+          }
+
+          selectedFriends.push(...(data || []));
+        }
+
+        this.emitLog(`✅ 查询完成,共获取 ${selectedFriends.length} 个好友信息`);
       } else {
         // 否则使用数据库中is_selected=true的好友
         this.emitLog(`📋 使用数据库中is_selected=true的好友`);
@@ -2962,6 +3687,7 @@ export class WechatReachService {
       // 开始按微信号分组发送
       let successCount = 0;
       let failCount = 0;
+      let skipCount = 0; // 跳过计数(重复消息)
       let processedCount = 0;
 
       // 遍历用户选择的微信号
@@ -2995,9 +3721,10 @@ export class WechatReachService {
             break;
           }
 
-          // 检查是否暂停
-          while (this.isPaused) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+          // 🆕 检查是否暂停
+          if (this.isPaused) {
+            this.emitLog('⏸️ 任务已暂停,退出发送流程');
+            return; // 直接退出方法,保留currentTaskParams
           }
 
           // 检查是否在禁发时间段内
@@ -3007,12 +3734,57 @@ export class WechatReachService {
 
           processedCount++;
           const friendName = friend.friend_remark || friend.friend_name;
-          this.emitLog(`[${processedCount}/${totalFriends}] 发送给: ${friendName}`);
+          this.emitLog(`[${processedCount}/${totalFriends}] 准备发送给: ${friendName}`);
 
-          // 组合发送
-          const success = await this.sendCombinedContents(page, friendName, contents);
+          // 🆕 检查所有类型是否都已发送过
+          let allTypesSent = true;
+          for (const content of contents) {
+            let messageContentObj: any;
+            switch (content.type) {
+              case 'text':
+                messageContentObj = { text: content.message };
+                break;
+              case 'video':
+                messageContentObj = { materialId: content.materialId };
+                break;
+              case 'link':
+                messageContentObj = { materialId: content.materialId };
+                break;
+              case 'image':
+                messageContentObj = { imageUrls: content.imageUrls };
+                break;
+            }
+
+            // 🐛 调试:打印检查参数
+            this.emitLog(`🐛 检查重复: userId=${userId}, friendId=${friend.id}, type=${content.type}`);
+
+            const typeSent = await this.checkMessageSent(
+              userId,
+              friend.id,
+              content.type,
+              messageContentObj
+            );
+
+            if (!typeSent) {
+              allTypesSent = false;
+              break; // 只要有一个类型未发送,就不跳过
+            }
+          }
+
+          if (allTypesSent) {
+            this.emitLog(`⏭️ 跳过好友: ${friendName} (所有类型都已发送过)`);
+            skipCount++;
+            continue; // 跳过这个好友
+          }
+
+          // 🐛 调试日志:打印调用sendCombinedContents的参数
+          this.logger.log(`🐛 调用sendCombinedContents: friendName=${friendName}, friendId=${friend.id}, userId=${userId}`);
+
+          // 🆕 组合发送(传递friendId参数)
+          const success = await this.sendCombinedContents(page, friendName, friend.id, contents, userId);
 
           if (success) {
+            // 🆕 不再记录combined类型的历史,因为每种类型已经在sendCombinedContents中记录了
             successCount++;
           } else {
             failCount++;
@@ -3027,17 +3799,36 @@ export class WechatReachService {
             progress: ((processedCount) / totalFriends * 100).toFixed(1),
           });
 
-          // 等待间隔 - 只等待3秒,避免被检测为异常
+          // ✅ 智能等待: 检测上一个好友的操作是否完成(检测搜索框是否可用)
           if (processedCount < totalFriends) {
-            this.emitLog(`⏳ 等待3秒后发送下一个好友...`);
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            this.emitLog(`⏳ 智能检测: 等待准备发送下一个好友...`);
+            await page.waitForFunction(() => {
+              const searchInput = document.querySelector('input[placeholder="搜索"]') as HTMLInputElement;
+              return searchInput && !searchInput.disabled;
+            }, { timeout: 2000 }).catch(() => {
+              this.emitLog(`⚠️ 搜索框未在2秒内准备好,继续执行`);
+            });
           }
         }
       }
 
+      // 记录任务结束时间并计算耗时
+      const endTime = new Date();
+      const durationMs = endTime.getTime() - startTime.getTime();
+      const durationSeconds = Math.floor(durationMs / 1000);
+      const durationMinutes = Math.floor(durationSeconds / 60);
+      const remainingSeconds = durationSeconds % 60;
+
+      this.emitLog('');
       this.emitLog('🎉 任务完成!');
-      this.emitLog(`✅ 成功: ${successCount}人`);
-      this.emitLog(`❌ 失败: ${failCount}人`);
+      this.emitLog(`⏰ 任务结束时间: ${endTime.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`);
+      this.emitLog(`⏱️ 总耗时: ${durationMinutes}分${remainingSeconds}秒 (${durationSeconds}秒)`);
+      this.emitLog('');
+      this.emitLog('📊 发送统计:');
+      this.emitLog(`   ✅ 成功: ${successCount}人`);
+      this.emitLog(`   ⏭️ 跳过(重复): ${skipCount}人`);
+      this.emitLog(`   ❌ 失败: ${failCount}人`);
+      this.emitLog(`   📝 总计: ${totalFriends}人`);
 
     } catch (error) {
       this.logger.error('组合发送任务失败:', error);
@@ -3046,9 +3837,12 @@ export class WechatReachService {
     } finally {
       if (page) await page.close();
       if (browser) await browser.close();
-      this.isRunning = false;
-      this.isPaused = false;
-      this.currentTaskId = null;
+      // 🆕 只有在非暂停状态下才重置isRunning和isPaused
+      // 如果是暂停退出,保持isPaused=true,以便恢复功能正常工作
+      if (!this.isPaused) {
+        this.isRunning = false;
+        this.currentTaskId = null;
+      }
     }
   }
 
@@ -3069,6 +3863,11 @@ export class WechatReachService {
 
     try {
       this.isRunning = true;
+      this.isPaused = false;
+
+      // 保存任务参数,用于暂停后继续
+      this.currentTaskParams = { userId, friendIds, messageType, messageContent, materialId };
+
       this.emitLog('🚀 开始发送私聊消息...');
 
       // 1. 从数据库获取好友信息
@@ -3099,23 +3898,34 @@ export class WechatReachService {
 
       const account = accounts[0];
 
-      // 3. 启动浏览器
-      const puppeteer = require('puppeteer');
-      browser = await puppeteer.launch({
-        headless: false, // 本地测试使用非无头模式
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-        ],
-      });
-      page = await browser.newPage();
-      await page.setViewport({ width: 1920, height: 1080 });
+      // 3. 启动浏览器并登录的函数(支持重新登录)
+      const initBrowserAndLogin = async () => {
+        const puppeteer = require('puppeteer');
+        browser = await puppeteer.launch({
+          headless: false, // 本地测试使用非无头模式
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+          ],
+        });
+        page = await browser.newPage();
+        await page.setViewport({ width: 1920, height: 1080 });
 
-      // 4. 登录堆雪球
-      this.emitLog('🔐 登录堆雪球...');
-      await this.loginDuixueqiu(page, account.username, account.password);
-      await new Promise(resolve => setTimeout(resolve, 3000));
+        // 保存到实例变量
+        this.currentBrowser = browser;
+        this.currentPage = page;
+
+        // 登录堆雪球
+        this.emitLog('🔐 登录堆雪球...');
+        await this.loginDuixueqiu(page, account.username, account.password);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        return { browser, page };
+      };
+
+      // 首次启动浏览器并登录
+      await initBrowserAndLogin();
 
       // 5. 点击"好友列表"标签
       this.emitLog('📋 切换到好友列表...');
@@ -3150,6 +3960,7 @@ export class WechatReachService {
       // 8. 遍历每个微信号
       let successCount = 0;
       let failCount = 0;
+      let skipCount = 0;
       let totalProcessed = 0;
 
       for (const [accountName, accountFriends] of friendsByAccount.entries()) {
@@ -3167,48 +3978,92 @@ export class WechatReachService {
             break;
           }
 
+          // 🆕 检查是否暂停
+          if (this.isPaused) {
+            this.emitLog('⏸️ 任务已暂停,退出发送流程');
+            return; // 直接退出方法,保留currentTaskParams
+          }
+
           totalProcessed++;
           this.emitLog(`👤 [${totalProcessed}/${friends.length}] 准备发送给: ${friend.friend_name}`);
 
+          // 9.1 构造消息内容对象(用于检查和记录)
+          let messageContentObj: any;
+          if (messageType === 'text') {
+            messageContentObj = { text: messageContent };
+          } else if (messageType === 'video') {
+            messageContentObj = { materialId: parseInt(materialId || '0'), additionalMessage: '' };
+          } else if (messageType === 'link') {
+            messageContentObj = { materialId: parseInt(materialId || '0'), additionalMessage: '' };
+          }
+
+          // 9.2 检查是否已发送过相同消息
+          const alreadySent = await this.checkMessageSent(
+            userId,
+            friend.id, // 使用好友的UUID
+            messageType,
+            messageContentObj
+          );
+
+          if (alreadySent) {
+            this.emitLog(`⏭️ 跳过好友: ${friend.friend_name} (已发送过相同消息)`);
+            skipCount++;
+            continue; // 跳过这个好友
+          }
+
           // 10. 发送消息
           let success = false;
+          let skipped = false; // 标记是否跳过
           try {
             const personalizedContent = messageContent.replace(/{昵称}/g, friend.friend_name);
 
             if (messageType === 'text') {
               // 发送文字消息 - 使用搜索方式
               // 10.1 搜索并点击好友
-              const found = await this.searchAndClickFriend(page, friend.friend_name);
+              const found = await this.searchAndClickFriend(page, friend.friend_name, userId);
 
               if (!found) {
-                throw new Error('未找到好友');
+                // 未找到好友,跳过
+                this.emitLog(`⏭️ 跳过好友: ${friend.friend_name} (未找到)`);
+                skipCount++;
+                skipped = true;
+              } else {
+                // 10.2 输入消息
+                await page.type('#editArea', personalizedContent);
+                await new Promise(resolve => setTimeout(resolve, 500));
+
+                // 10.3 点击发送按钮
+                await page.click('.send-btn');
+                await new Promise(resolve => setTimeout(resolve, 500));
+
+                // 10.4 返回好友列表
+                await page.goBack();
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                success = true;
               }
-
-              // 10.2 输入消息
-              await page.type('#editArea', personalizedContent);
-              await new Promise(resolve => setTimeout(resolve, 500));
-
-              // 10.3 点击发送按钮
-              await page.click('.send-btn');
-              await new Promise(resolve => setTimeout(resolve, 500));
-
-              // 10.4 返回好友列表
-              await page.goBack();
-              await new Promise(resolve => setTimeout(resolve, 1000));
-
-              success = true;
             } else if (messageType === 'video' && materialId) {
               // 发送视频号消息 - sendVideoMaterialToFriend内部会查找好友
-              success = await this.sendVideoMaterialToFriend(page, friend.friend_name, parseInt(materialId));
+              success = await this.sendVideoMaterialToFriend(page, friend.friend_name, parseInt(materialId), userId);
             } else if (messageType === 'link' && materialId) {
               // 发送链接消息 - sendLinkMaterialToFriend内部会查找好友
-              success = await this.sendLinkMaterialToFriend(page, friend.friend_name, parseInt(materialId));
+              success = await this.sendLinkMaterialToFriend(page, friend.friend_name, parseInt(materialId), userId);
             }
 
             if (success) {
               this.emitLog(`✅ 已发送给: ${friend.friend_name}`);
               successCount++;
-            } else {
+
+              // 10.5 记录发送历史
+              await this.recordMessageSent(
+                userId,
+                friend.id,
+                friend.friend_name,
+                messageType,
+                messageContentObj
+              );
+            } else if (!skipped) {
+              // 只有不是跳过的情况才计入失败
               this.emitLog(`❌ 发送失败: ${friend.friend_name}`);
               failCount++;
             }
@@ -3223,6 +4078,7 @@ export class WechatReachService {
             total: friends.length,
             successCount,
             failCount,
+            skipCount,
             progress: (totalProcessed / friends.length * 100).toFixed(1),
           });
 
@@ -3238,6 +4094,7 @@ export class WechatReachService {
 
       this.emitLog('🎉 任务完成!');
       this.emitLog(`✅ 成功: ${successCount}人`);
+      this.emitLog(`⏭️ 跳过: ${skipCount}人 (已发送过或未找到)`);
       this.emitLog(`❌ 失败: ${failCount}人`);
 
     } catch (error) {
@@ -3245,10 +4102,27 @@ export class WechatReachService {
       this.emitLog(`❌ 任务失败: ${error.message}`);
       throw error;
     } finally {
-      if (page) await page.close();
-      if (browser) await browser.close();
-      this.isRunning = false;
-      this.isPaused = false;
+      // 清理资源
+      try {
+        if (page) await page.close();
+        if (browser) await browser.close();
+      } catch (error) {
+        this.logger.error('关闭浏览器失败:', error);
+      }
+
+      // 清空实例变量
+      this.currentBrowser = null;
+      this.currentPage = null;
+
+      // 只有在任务完全结束时才清空任务参数和运行状态
+      // 如果是暂停状态,保留任务参数和运行状态以便继续
+      if (!this.isPaused) {
+        this.currentTaskParams = null;
+        this.isRunning = false;
+      } else {
+        // 暂停状态下,保持isRunning=true,以便恢复时继续
+        this.logger.log('⏸️ 暂停状态,保留任务参数和运行状态');
+      }
     }
   }
 
