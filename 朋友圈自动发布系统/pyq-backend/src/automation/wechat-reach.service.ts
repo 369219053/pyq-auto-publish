@@ -24,6 +24,35 @@ export class WechatReachService {
   // 新增: 保存当前任务参数,用于继续任务
   private currentTaskParams: any = null;
 
+  // 🆕 表情库: 100个常用表情,用于随机添加到文字消息首尾
+  private readonly EMOJI_POOL = [
+    // 笑脸类 (20个)
+    '😀', '😃', '😄', '😁', '😆', '😊', '😇', '🙂', '🙃', '😉',
+    '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😝',
+
+    // 手势类 (15个)
+    '👍', '👏', '🙌', '👌', '✌️', '🤝', '🙏', '💪', '👊', '✊',
+    '🤲', '👐', '🤗', '🤟', '🤘',
+
+    // 爱心类 (10个)
+    '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💕',
+
+    // 庆祝类 (15个)
+    '🎉', '🎊', '🎈', '🎁', '🎀', '🎂', '🍰', '🎆', '🎇', '✨',
+    '🌟', '⭐', '💫', '🔥', '💥',
+
+    // 自然类 (15个)
+    '🌸', '🌺', '🌻', '🌼', '🌷', '🌹', '🥀', '🌿', '🍀', '🌾',
+    '🌈', '☀️', '🌤️', '⛅', '🌙',
+
+    // 食物类 (10个)
+    '🍎', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🍑', '🍒', '🥝',
+
+    // 其他常用 (15个)
+    '💰', '💎', '🏆', '🎯', '📱', '💻', '📚', '✅', '🔔', '🎵',
+    '🎶', '🌍', '🚀', '⚡', '🔆'
+  ];
+
   constructor(
     private readonly puppeteerService: PuppeteerService,
     private readonly supabaseService: SupabaseService,
@@ -738,6 +767,54 @@ export class WechatReachService {
   }
 
   /**
+   * 🆕 为文字消息添加随机表情
+   * @param text 原始文字内容
+   * @returns 添加表情后的文字内容
+   */
+  private addRandomEmojis(text: string): string {
+    if (!text) return text;
+
+    // 随机选择开头表情(1-2个)
+    const startEmojiCount = Math.random() > 0.5 ? 1 : 2;
+    const startEmojis = [];
+    for (let i = 0; i < startEmojiCount; i++) {
+      const randomIndex = Math.floor(Math.random() * this.EMOJI_POOL.length);
+      startEmojis.push(this.EMOJI_POOL[randomIndex]);
+    }
+
+    // 随机选择结尾表情(1-2个)
+    const endEmojiCount = Math.random() > 0.5 ? 1 : 2;
+    const endEmojis = [];
+    for (let i = 0; i < endEmojiCount; i++) {
+      const randomIndex = Math.floor(Math.random() * this.EMOJI_POOL.length);
+      endEmojis.push(this.EMOJI_POOL[randomIndex]);
+    }
+
+    return `${startEmojis.join('')} ${text} ${endEmojis.join('')}`;
+  }
+
+  /**
+   * 🆕 提取核心文案(去除首尾的表情符号和空白字符)
+   * 用于防重复发送时的哈希值计算
+   * @param text 原始文字内容
+   * @returns 去除首尾表情后的核心文案
+   */
+  private extractCoreText(text: string): string {
+    if (!text) return '';
+
+    // 先去除首尾空白
+    let coreText = text.trim();
+
+    // 去除开头的表情符号和空白(可能有多个)
+    coreText = coreText.replace(/^[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{FE00}-\u{FE0F}\u{1F1E0}-\u{1F1FF}\s]+/gu, '');
+
+    // 去除结尾的表情符号和空白(可能有多个)
+    coreText = coreText.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{FE00}-\u{FE0F}\u{1F1E0}-\u{1F1FF}\s]+$/gu, '');
+
+    return coreText.trim();
+  }
+
+  /**
    * 计算消息内容的哈希值
    * 用于快速比对是否已发送过相同消息
    */
@@ -746,7 +823,12 @@ export class WechatReachService {
 
     switch (messageType) {
       case 'text':
-        contentString = messageContent.text || '';
+        // 🆕 提取核心文案(去除首尾表情符号)
+        const originalText = messageContent.text || '';
+        const coreText = this.extractCoreText(originalText);
+        contentString = coreText;
+        this.logger.debug(`原文案: ${originalText}`);
+        this.logger.debug(`核心文案: ${coreText}`);
         break;
       case 'video':
         contentString = `video_${messageContent.materialId}_${messageContent.additionalMessage || ''}`;
@@ -1265,7 +1347,11 @@ export class WechatReachService {
   ): Promise<boolean> {
     try {
       // 替换{昵称}变量
-      const finalMessage = message.replace(/\{昵称\}/g, friendName);
+      let finalMessage = message.replace(/\{昵称\}/g, friendName);
+
+      // 🆕 添加随机表情
+      finalMessage = this.addRandomEmojis(finalMessage);
+      this.emitLog(`🎨 添加随机表情后: ${finalMessage.substring(0, 50)}...`);
 
       // 等待输入框出现
       await page.waitForSelector('#editArea', { timeout: 10000 });
