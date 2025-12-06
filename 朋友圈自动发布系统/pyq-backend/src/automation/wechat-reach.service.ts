@@ -991,20 +991,20 @@ export class WechatReachService {
 
       // 智能提取搜索关键词:
       // 堆雪球搜索规则: 只支持单个连续的中文/数字关键词,不支持多个关键词组合
-      // 策略: 按标点符号分割,提取最长的中文/数字片段作为搜索关键词
-      // 示例: "微博-杨女士-购房" → ["微博", "杨女士", "购房"] → 选择"杨女士"(中间的)
-      // 示例: "..—家长志愿者(Nina)" → ["家长志愿者"] → 选择"家长志愿者"
+      // 策略:
+      // 1. 如果有括号,优先使用括号外的内容(括号内通常是备注)
+      // 2. 否则按标点符号分割,提取第一个片段(通常是主要名称)
+      // 示例: "小灵(沪港纪老板)" → ["小灵", "沪港纪老板"] → 选择"小灵"(括号外)
+      // 示例: "微博-杨女士-购房" → ["微博", "杨女士", "购房"] → 选择"微博"(第一个)
 
       // 按所有非中文、非数字字符分割
       const segments = friendName.split(/[^\u4e00-\u9fa50-9]+/).filter(s => s.length > 0);
 
-      // 选择最长的片段作为搜索关键词(通常是中间的主要部分)
+      // 选择搜索关键词
       let searchKeyword = '';
       if (segments.length > 0) {
-        // 如果有多个片段,选择最长的
-        searchKeyword = segments.reduce((longest, current) =>
-          current.length > longest.length ? current : longest
-        );
+        // 优先使用第一个片段(通常是主要名称,括号外的内容)
+        searchKeyword = segments[0];
       } else {
         // 如果没有片段,使用原始名称
         searchKeyword = friendName;
@@ -1012,7 +1012,7 @@ export class WechatReachService {
 
       this.emitLog(`🔧 原始名称: ${friendName}`);
       this.emitLog(`🔧 分割片段: [${segments.join(', ')}]`);
-      this.emitLog(`🔧 搜索关键词(最长片段): ${searchKeyword}`);
+      this.emitLog(`🔧 搜索关键词(第一个片段): ${searchKeyword}`);
 
       await searchInput.click();
       await new Promise(resolve => setTimeout(resolve, 200));
@@ -1025,15 +1025,54 @@ export class WechatReachService {
       // 4. 等待搜索结果加载
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // 5. 点击搜索结果中的好友(同时匹配名称和头像URL)
+      // 5. 点击搜索结果中的好友(同时匹配名称和头像URL,排除群聊)
       const clicked = await page.evaluate((name, expectedAvatarUrl) => {
-        // 找到所有好友/群聊元素
+        // 🆕 找到"好友"分隔符
+        const friendHeader = document.querySelector('.recent-and-friend-panel-concat-item__search-title');
+
+        // 获取所有搜索结果元素
         const allElements = Array.from(document.querySelectorAll('.recent-and-friend-panel-concat-item__friend'));
-        const allTexts = allElements.map(el => el.textContent?.trim() || '');
+
+        // 🐛 调试: 打印所有元素的文本内容
+        const allElementsTexts = allElements.map(el => el.textContent?.trim() || '');
+        console.log('🐛 所有搜索结果元素:', allElementsTexts);
+        console.log('🐛 "好友"分隔符是否存在:', !!friendHeader);
+        console.log('🐛 "好友"分隔符文本:', friendHeader?.textContent?.trim());
+
+        // 🆕 过滤出好友元素(只保留"好友"分隔符之后的元素,排除之前的群聊)
+        const allFriendElements = allElements.filter(el => {
+          if (!friendHeader) {
+            // 如果没有找到"好友"分隔符,说明没有群聊,所有元素都是好友
+            console.log('🐛 没有找到"好友"分隔符,所有元素都视为好友');
+            return true;
+          }
+
+          // 比较元素在DOM中的位置
+          const position = el.compareDocumentPosition(friendHeader);
+          const isPreceding = (position & Node.DOCUMENT_POSITION_PRECEDING) !== 0;
+
+          // 🐛 调试每个元素的位置关系
+          const elText = el.textContent?.trim() || '';
+          console.log(`🐛 元素"${elText}": position=${position}, isPreceding=${isPreceding}`);
+
+          // DOCUMENT_POSITION_PRECEDING = 2 表示friendHeader在el之前
+          // 如果friendHeader在el之前,说明el在"好友"分隔符之后,是好友
+          return isPreceding;
+        });
+
+        const allTexts = allFriendElements.map(el => el.textContent?.trim() || '');
+        console.log('🐛 过滤后的好友元素:', allTexts);
+
+        const debugInfo = {
+          totalElements: allElements.length,
+          friendElements: allFriendElements.length,
+          groupElements: allElements.length - allFriendElements.length,
+          hasFriendHeader: !!friendHeader
+        };
 
         // 如果有头像URL,优先使用头像URL匹配
         if (expectedAvatarUrl) {
-          for (const el of allElements) {
+          for (const el of allFriendElements) {
             const text = el.textContent?.trim() || '';
             const imgElement = el.querySelector('img');
             const actualAvatarUrl = imgElement?.getAttribute('src') || '';
@@ -1045,14 +1084,14 @@ export class WechatReachService {
                 success: true,
                 clickedText: text,
                 matchType: 'exact-with-avatar',
-                debug: `精确匹配成功(名称+头像),共${allElements.length}个元素`
+                debug: `精确匹配成功(名称+头像),总元素${debugInfo.totalElements}个(好友${debugInfo.friendElements}个,群聊${debugInfo.groupElements}个)`
               };
             }
           }
         }
 
         // 如果没有头像URL或头像匹配失败,尝试精确匹配名称
-        for (const el of allElements) {
+        for (const el of allFriendElements) {
           const text = el.textContent?.trim() || '';
 
           // 精确匹配好友昵称
@@ -1062,13 +1101,13 @@ export class WechatReachService {
               success: true,
               clickedText: text,
               matchType: 'exact-name-only',
-              debug: `精确匹配成功(仅名称),共${allElements.length}个元素,所有元素: [${allTexts.join(', ')}]`
+              debug: `精确匹配成功(仅名称),总元素${debugInfo.totalElements}个(好友${debugInfo.friendElements}个,群聊${debugInfo.groupElements}个),好友列表: [${allTexts.join(', ')}]`
             };
           }
         }
 
         // 如果精确匹配失败,再尝试模糊匹配
-        for (const el of allElements) {
+        for (const el of allFriendElements) {
           const text = el.textContent?.trim() || '';
 
           // 模糊匹配
@@ -1078,7 +1117,7 @@ export class WechatReachService {
               success: true,
               clickedText: text,
               matchType: 'fuzzy',
-              debug: `模糊匹配成功,共${allElements.length}个元素,所有元素: [${allTexts.join(', ')}]`
+              debug: `模糊匹配成功,总元素${debugInfo.totalElements}个(好友${debugInfo.friendElements}个,群聊${debugInfo.groupElements}个),好友列表: [${allTexts.join(', ')}]`
             };
           }
         }
@@ -1087,7 +1126,7 @@ export class WechatReachService {
           success: false,
           clickedText: '',
           matchType: 'not-found',
-          debug: `未找到匹配的好友,共${allElements.length}个元素,所有元素: [${allTexts.join(', ')}]`
+          debug: `未找到匹配的好友,总元素${debugInfo.totalElements}个(好友${debugInfo.friendElements}个,群聊${debugInfo.groupElements}个),好友列表: [${allTexts.join(', ')}]`
         };
       }, friendName, avatarUrl);
 
