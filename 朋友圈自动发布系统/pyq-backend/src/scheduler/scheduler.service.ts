@@ -7,19 +7,23 @@ import { PuppeteerService } from '../puppeteer/puppeteer.service';
 import { StorageService } from '../storage/storage.service';
 import { SupabaseService } from '../common/supabase.service';
 import { DuixueqiuFriendsService } from '../automation/duixueqiu-friends.service';
+import { VideoMaterialService } from '../automation/video-material.service';
+import { LinkMaterialService } from '../automation/link-material.service';
 import { Pool } from 'pg';
 
 /**
  * 定时任务服务
- * 负责定时同步文章等自动化任务
+ * 负责定时同步文章、视频号素材、链接素材等自动化任务
  * 支持动态调整同步间隔
  */
 @Injectable()
 export class SchedulerService implements OnModuleInit {
   private readonly logger = new Logger(SchedulerService.name);
   private syncIntervalHandle: NodeJS.Timeout | null = null;
+  private materialSyncIntervalHandle: NodeJS.Timeout | null = null; // 素材同步定时器
   private isProcessingPublish = false;
   private isProcessingDelete = false; // 防止重复执行删除任务
+  private isProcessingMaterialSync = false; // 防止重复执行素材同步
 
   constructor(
     private readonly wechatMonitorService: WechatMonitorService,
@@ -30,6 +34,8 @@ export class SchedulerService implements OnModuleInit {
     private readonly storageService: StorageService,
     private readonly supabaseService: SupabaseService,
     private readonly duixueqiuFriendsService: DuixueqiuFriendsService,
+    private readonly videoMaterialService: VideoMaterialService,
+    private readonly linkMaterialService: LinkMaterialService,
     @Inject('DATABASE_POOL') private readonly pool: Pool,
   ) {}
 
@@ -41,6 +47,9 @@ export class SchedulerService implements OnModuleInit {
 
     // 初始化定时同步任务
     await this.initializeSyncTask();
+
+    // 初始化素材同步任务
+    await this.initializeMaterialSyncTask();
 
     // 确保Storage Bucket存在
     try {
@@ -212,6 +221,178 @@ export class SchedulerService implements OnModuleInit {
   async updateSyncInterval(intervalMinutes: number) {
     this.logger.log(`更新同步间隔为: ${intervalMinutes} 分钟`);
     await this.restartSyncTask(intervalMinutes);
+  }
+
+  /**
+   * 初始化素材同步任务
+   */
+  async initializeMaterialSyncTask() {
+    try {
+      this.logger.log('🔧 开始初始化素材同步任务...');
+
+      const intervalMinutes = await this.configService.getMaterialSyncInterval();
+      this.logger.log(`⏰ 从配置中获取素材同步间隔: ${intervalMinutes} 分钟`);
+
+      await this.restartMaterialSyncTask(intervalMinutes);
+
+      this.logger.log('✅ 素材同步任务初始化成功');
+    } catch (error) {
+      this.logger.error(`❌ 初始化素材同步任务失败: ${error.message}`, error.stack);
+      // 使用默认间隔重试
+      this.logger.log('🔄 尝试使用默认间隔(60分钟)重新初始化...');
+      try {
+        await this.restartMaterialSyncTask(60);
+        this.logger.log('✅ 使用默认间隔初始化成功');
+      } catch (retryError) {
+        this.logger.error(`❌ 使用默认间隔初始化也失败: ${retryError.message}`);
+      }
+    }
+  }
+
+  /**
+   * 重启素材同步任务(使用新的间隔)
+   */
+  async restartMaterialSyncTask(intervalMinutes: number) {
+    // 清除旧的定时任务
+    if (this.materialSyncIntervalHandle) {
+      clearInterval(this.materialSyncIntervalHandle);
+      this.logger.log('🗑️  已清除旧的素材同步任务');
+    }
+
+    // 创建新的定时任务
+    const intervalMs = intervalMinutes * 60 * 1000;
+    this.materialSyncIntervalHandle = setInterval(async () => {
+      await this.executeMaterialSync();
+    }, intervalMs);
+
+    const nextSyncTime = new Date(Date.now() + intervalMs);
+    this.logger.log(`🚀 新的素材同步任务已启动!`);
+    this.logger.log(`   ⏰ 同步间隔: ${intervalMinutes} 分钟`);
+    this.logger.log(`   📅 下次同步时间: ${nextSyncTime.toLocaleString('zh-CN')}`);
+
+    // 异步执行首次同步,不阻塞启动流程
+    this.logger.log('🔄 将在后台执行首次素材同步...');
+    setImmediate(() => {
+      this.executeMaterialSync().catch(error => {
+        this.logger.error('❌ 首次素材同步失败', error);
+      });
+    });
+  }
+
+  /**
+   * 执行素材同步任务
+   */
+  async executeMaterialSync() {
+    if (this.isProcessingMaterialSync) {
+      this.logger.log('⏳ 上一个素材同步任务还在处理中,跳过本次同步');
+      return;
+    }
+
+    const startTime = Date.now();
+    this.logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    this.logger.log('🔄 开始执行定时素材同步任务...');
+    this.logger.log(`⏰ 执行时间: ${new Date().toLocaleString('zh-CN')}`);
+
+    try {
+      this.isProcessingMaterialSync = true;
+
+      // 获取所有需要同步的用户(status='active')
+      const { data: users, error: userError } = await this.supabaseService.getClient()
+        .from('duixueqiu_accounts')
+        .select('user_id, username')
+        .eq('status', 'active');
+
+      if (userError) {
+        throw new Error(`获取用户列表失败: ${userError.message}`);
+      }
+
+      if (!users || users.length === 0) {
+        this.logger.log('⚠️  没有找到活跃的堆雪球账号,跳过素材同步');
+        this.logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        return;
+      }
+
+      this.logger.log(`📋 找到 ${users.length} 个活跃用户,开始同步素材...`);
+
+      let totalVideoMaterials = 0;
+      let totalLinkMaterials = 0;
+      let successCount = 0;
+      let failCount = 0;
+
+      // 逐个用户同步素材
+      for (const user of users) {
+        try {
+          this.logger.log(`👤 开始同步用户 ${user.username} (${user.user_id}) 的素材...`);
+
+          // 同步视频号素材
+          this.logger.log('📹 同步视频号素材...');
+          const videoResult = await this.videoMaterialService.syncMaterialLibrary(user.user_id);
+          if (videoResult.success) {
+            totalVideoMaterials += videoResult.count;
+            this.logger.log(`✅ 视频号素材同步成功: ${videoResult.count} 个`);
+          } else {
+            this.logger.warn(`⚠️  视频号素材同步失败: ${videoResult.error}`);
+          }
+
+          // 等待5秒,避免频繁操作
+          await new Promise(resolve => setTimeout(resolve, 5000));
+
+          // 同步链接素材
+          this.logger.log('🔗 同步链接素材...');
+          const linkResult = await this.linkMaterialService.syncMaterialLibrary(user.user_id);
+          if (linkResult.success) {
+            totalLinkMaterials += linkResult.count;
+            this.logger.log(`✅ 链接素材同步成功: ${linkResult.count} 个`);
+          } else {
+            this.logger.warn(`⚠️  链接素材同步失败: ${linkResult.error}`);
+          }
+
+          successCount++;
+          this.logger.log(`✅ 用户 ${user.username} 素材同步完成`);
+
+          // 等待10秒再同步下一个用户,避免频繁操作
+          if (users.indexOf(user) < users.length - 1) {
+            this.logger.log('⏳ 等待10秒后同步下一个用户...');
+            await new Promise(resolve => setTimeout(resolve, 10000));
+          }
+
+        } catch (error) {
+          failCount++;
+          this.logger.error(`❌ 用户 ${user.username} 素材同步失败: ${error.message}`);
+        }
+      }
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      this.logger.log(`✅ 定时素材同步完成!`);
+      this.logger.log(`   📊 成功: ${successCount} 个用户, 失败: ${failCount} 个用户`);
+      this.logger.log(`   📹 视频号素材: ${totalVideoMaterials} 个`);
+      this.logger.log(`   🔗 链接素材: ${totalLinkMaterials} 个`);
+      this.logger.log(`   ⏱️  总耗时: ${duration}秒`);
+      this.logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+    } catch (error) {
+      this.logger.error(`❌ 定时素材同步失败: ${error.message}`, error.stack);
+      this.logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    } finally {
+      this.isProcessingMaterialSync = false;
+    }
+  }
+
+  /**
+   * 手动触发素材同步
+   */
+  async triggerMaterialSync() {
+    this.logger.log('手动触发素材同步任务...');
+    await this.executeMaterialSync();
+  }
+
+  /**
+   * 更新素材同步间隔
+   */
+  async updateMaterialSyncInterval(intervalMinutes: number) {
+    this.logger.log(`更新素材同步间隔为: ${intervalMinutes} 分钟`);
+    await this.restartMaterialSyncTask(intervalMinutes);
   }
 
   /**

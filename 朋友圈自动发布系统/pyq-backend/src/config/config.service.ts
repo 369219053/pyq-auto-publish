@@ -104,5 +104,24 @@ export class ConfigService {
       '自动同步文章的时间间隔(分钟)',
     );
   }
+
+  /**
+   * 获取素材同步间隔(分钟)
+   */
+  async getMaterialSyncInterval(): Promise<number> {
+    const value = await this.getConfig('material_sync_interval_minutes');
+    return value ? parseInt(value, 10) : 60; // 默认60分钟
+  }
+
+  /**
+   * 设置素材同步间隔(分钟)
+   */
+  async setMaterialSyncInterval(minutes: number): Promise<boolean> {
+    return this.setConfig(
+      'material_sync_interval_minutes',
+      minutes.toString(),
+      '自动同步视频号和链接素材的时间间隔(分钟)',
+    );
+  }
 }
 
