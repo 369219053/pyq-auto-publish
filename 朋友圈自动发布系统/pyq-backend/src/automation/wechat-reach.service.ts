@@ -2737,15 +2737,23 @@ export class WechatReachService {
         const imageBase64 = imageBase64Array[i];
         const matches = imageBase64.match(/^data:image\/(png|jpg|jpeg);base64,(.+)$/);
         if (matches) {
-          const ext = matches[1] === 'jpg' ? 'jpg' : matches[1];
+          // 统一转换扩展名: jpeg/jpg → jpg, png → png
+          let ext = matches[1];
+          if (ext === 'jpeg') ext = 'jpg';
+
           const base64Data = matches[2];
           const buffer = Buffer.from(base64Data, 'base64');
-          const localPath = path.join(process.cwd(), `temp_chat_image_${Date.now()}_${i}.${ext}`);
+
+          // 使用更安全的临时目录路径
+          const tmpDir = require('os').tmpdir();
+          const localPath = path.join(tmpDir, `temp_chat_image_${Date.now()}_${i}.${ext}`);
+
           fs.writeFileSync(localPath, buffer);
           localImagePaths.push(localPath);
-          this.emitLog(`✅ 图片 ${i + 1} 已保存到本地`);
+          this.emitLog(`✅ 图片 ${i + 1} 已保存到本地: ${path.basename(localPath)}`);
         } else {
           this.emitLog(`⚠️ 图片 ${i + 1} 格式不正确,跳过`);
+          this.emitLog(`   实际格式: ${imageBase64.substring(0, 50)}...`);
         }
       }
 
@@ -2753,34 +2761,30 @@ export class WechatReachService {
         throw new Error('没有有效的图片可以发送');
       }
 
-      // 4. 点击"文件"按钮
-      this.emitLog('📁 点击"文件"按钮...');
-      const fileButtonClicked = await page.evaluate(() => {
-        // 查找title="文件"的元素
-        const allElements = document.querySelectorAll('[title="文件"]');
-        for (const el of allElements) {
-          (el as HTMLElement).click();
-          console.log('✅ 已点击"文件"按钮');
-          return true;
-        }
-        return false;
-      });
+      // 4. 直接查找文件上传输入框(不点击任何按钮)
+      this.emitLog(`📤 查找图片上传输入框...`);
 
-      if (!fileButtonClicked) {
-        throw new Error('未找到"文件"按钮');
-      }
-
-      // 等待文件上传对话框出现
-      this.emitLog('⏳ 等待文件上传对话框出现...');
-      await new Promise(resolve => setTimeout(resolve, 1500));
-
-      // 5. 等待并查找文件上传输入框
-      this.emitLog(`📤 开始上传 ${localImagePaths.length} 张图片...`);
+      // 等待输入框出现
       try {
-        await page.waitForSelector('input[type="file"]', { timeout: 5000 });
+        await page.waitForSelector('input[type="file"]', { timeout: 3000 });
         this.emitLog('✅ 找到文件上传输入框');
       } catch (error) {
-        this.emitLog('⚠️ 等待文件上传输入框超时,尝试直接查找...');
+        this.emitLog('⚠️ 未找到文件上传输入框,尝试点击图片按钮...');
+
+        // 如果没有找到,尝试点击图片按钮
+        const imageButtonClicked = await page.evaluate(() => {
+          const allElements = document.querySelectorAll('[title="图片"]');
+          for (const el of allElements) {
+            (el as HTMLElement).click();
+            return true;
+          }
+          return false;
+        });
+
+        if (imageButtonClicked) {
+          this.emitLog('✅ 已点击图片按钮,等待输入框出现...');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
       }
 
       const fileInput = await page.$('input[type="file"]');
@@ -2788,86 +2792,153 @@ export class WechatReachService {
         throw new Error('未找到文件上传输入框');
       }
 
-      // 6. 上传图片文件
-      this.emitLog(`📁 选择 ${localImagePaths.length} 张图片文件...`);
+      // 5. 上传图片文件
+      this.emitLog(`📁 上传 ${localImagePaths.length} 张图片文件...`);
       await fileInput.uploadFile(...localImagePaths);
-      this.emitLog('✅ 文件已选择');
+      this.emitLog('✅ 文件已上传');
 
-      // 7. 智能等待图片上传完成
-      this.emitLog('⏳ 等待图片上传完成...');
-      try {
-        // 方法1: 检查文件input的files属性
-        await page.waitForFunction(
-          (expectedCount) => {
-            const fileInputs = document.querySelectorAll('input[type="file"]');
-            for (const input of fileInputs) {
-              const files = (input as HTMLInputElement).files;
-              if (files && files.length >= expectedCount) {
-                return true;
-              }
-            }
-            return false;
-          },
-          { timeout: 10000 },
-          localImagePaths.length
-        );
-        this.emitLog('✅ 图片文件已选择(动态检测)');
-      } catch (error) {
-        this.emitLog('⚠️ 动态检测超时,使用固定等待...');
-      }
+      // 6. 等待图片上传完成,确认框会自动弹出
+      this.emitLog(`⏳ 等待图片上传完成,确认框会自动弹出...`);
+      await new Promise(resolve => setTimeout(resolve, 3000));
 
-      // 额外等待图片处理完成
-      const estimatedTime = Math.max(3000, localImagePaths.length * 2000); // 每张图片至少2秒
-      this.emitLog(`⏳ 等待图片处理完成 (预计${estimatedTime / 1000}秒)...`);
-      await new Promise(resolve => setTimeout(resolve, estimatedTime));
+      // 7. 先输出所有对话框信息用于调试
+      this.emitLog('🔍 分析页面上的所有对话框和弹窗...');
+      const dialogDebugInfo = await page.evaluate(() => {
+        const result = {
+          elDialogs: [],
+          allDialogs: [],
+          visibleElements: []
+        };
 
-      // 8. 点击"确定"按钮发送
-      // 完全按照本地测试脚本test-video-material-dialog.js的实现
-      this.emitLog('🔘 点击确定按钮发送...');
-      const confirmClicked = await page.evaluate(() => {
-        // 1. 优先查找Element UI的成功按钮
-        const successButtons = document.querySelectorAll('button.el-button--success');
-        for (const button of successButtons) {
-          const text = button.textContent?.trim();
-          if (text === '确定' || text === '确 定') {
-            console.log(`✅ 找到确定按钮(el-button--success): "${text}"`);
-            (button as HTMLElement).click();
-            return true;
+        // 1. 查找Element UI对话框
+        const elDialogWrappers = document.querySelectorAll('.el-dialog__wrapper');
+        for (const dialog of elDialogWrappers) {
+          const style = window.getComputedStyle(dialog);
+          if (style.display !== 'none') {
+            const title = dialog.querySelector('.el-dialog__title');
+            const titleText = title ? title.textContent?.trim() : '无标题';
+            const footer = dialog.querySelector('.el-dialog__footer');
+            const buttons = footer ? footer.querySelectorAll('button') : [];
+            const buttonTexts = Array.from(buttons).map(btn => btn.textContent?.trim());
+
+            result.elDialogs.push({
+              type: 'Element UI Dialog',
+              title: titleText,
+              buttonCount: buttons.length,
+              buttons: buttonTexts,
+              display: style.display,
+              visibility: style.visibility
+            });
           }
         }
 
-        // 2. 查找所有button元素
+        // 2. 查找所有包含"发送"或"确定"文字的可见元素
+        const allElements = document.querySelectorAll('*');
+        for (const el of allElements) {
+          const text = el.textContent?.trim();
+          if (text && (text.includes('发送图片') || text.includes('确定') || text.includes('取消'))) {
+            const style = window.getComputedStyle(el);
+            if (style.display !== 'none' && style.visibility !== 'hidden') {
+              result.visibleElements.push({
+                tag: el.tagName,
+                text: text.substring(0, 50),
+                className: el.className,
+                display: style.display,
+                visibility: style.visibility
+              });
+            }
+          }
+        }
+
+        // 3. 查找所有dialog标签
+        const dialogTags = document.querySelectorAll('dialog');
+        for (const dialog of dialogTags) {
+          const style = window.getComputedStyle(dialog);
+          result.allDialogs.push({
+            type: 'HTML Dialog',
+            open: (dialog as HTMLDialogElement).open,
+            display: style.display,
+            visibility: style.visibility,
+            innerHTML: dialog.innerHTML.substring(0, 200)
+          });
+        }
+
+        return result;
+      });
+
+      this.emitLog(`📋 Element UI对话框: ${dialogDebugInfo.elDialogs.length} 个`);
+      dialogDebugInfo.elDialogs.forEach((dialog, index) => {
+        this.emitLog(`  [${index + 1}] ${dialog.type}: "${dialog.title}"`);
+        this.emitLog(`      按钮: ${JSON.stringify(dialog.buttons)}`);
+      });
+
+      this.emitLog(`📋 HTML Dialog标签: ${dialogDebugInfo.allDialogs.length} 个`);
+      dialogDebugInfo.allDialogs.forEach((dialog, index) => {
+        this.emitLog(`  [${index + 1}] open=${dialog.open}, display=${dialog.display}`);
+      });
+
+      this.emitLog(`📋 包含关键词的可见元素: ${dialogDebugInfo.visibleElements.length} 个`);
+      dialogDebugInfo.visibleElements.slice(0, 10).forEach((el, index) => {
+        this.emitLog(`  [${index + 1}] <${el.tag}> class="${el.className}" text="${el.text}"`);
+      });
+
+      // 8. 点击确认框的确定按钮
+      this.emitLog('🔘 点击确认框的确定按钮...');
+      const confirmClicked = await page.evaluate(() => {
+        // 策略1: 查找所有可见的按钮,找到文本为"确定"且最近出现的
         const allButtons = document.querySelectorAll('button');
+        let confirmButton = null;
+        let maxZIndex = -1;
+
         for (const button of allButtons) {
           const text = button.textContent?.trim();
+          const style = window.getComputedStyle(button);
+          const disabled = (button as HTMLButtonElement).disabled;
+
+          // 检查按钮是否可见
+          if (style.display === 'none' || style.visibility === 'hidden' || disabled) {
+            continue;
+          }
+
+          // 检查按钮文本是否为"确定"
           if (text === '确定' || text === '确 定') {
-            console.log(`✅ 找到确定按钮(button): "${text}"`);
-            (button as HTMLElement).click();
-            return true;
+            // 获取z-index,找到最上层的确定按钮
+            const zIndex = parseInt(style.zIndex) || 0;
+
+            // 检查按钮的父元素是否可见
+            let parent = button.parentElement;
+            let isVisible = true;
+            while (parent && parent !== document.body) {
+              const parentStyle = window.getComputedStyle(parent);
+              if (parentStyle.display === 'none' || parentStyle.visibility === 'hidden') {
+                isVisible = false;
+                break;
+              }
+              parent = parent.parentElement;
+            }
+
+            if (isVisible && zIndex > maxZIndex) {
+              maxZIndex = zIndex;
+              confirmButton = button;
+            }
           }
         }
 
-        // 3. 查找span元素
-        const allSpans = document.querySelectorAll('span');
-        for (const span of allSpans) {
-          const text = span.textContent?.trim();
-          if (text === '确定' || text === '确 定') {
-            console.log(`✅ 找到确定按钮(span): "${text}"`);
-            (span as HTMLElement).click();
-            return true;
-          }
+        if (confirmButton) {
+          console.log(`✅ 找到确定按钮,z-index=${maxZIndex}`);
+          (confirmButton as HTMLElement).click();
+          return true;
         }
 
         return false;
       });
 
-      if (!confirmClicked) {
-        this.emitLog(`⚠️ 未找到确定按钮,但继续执行`);
-      } else {
+      if (confirmClicked) {
         this.emitLog(`✅ 已点击确定按钮`);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      } else {
+        this.emitLog(`⚠️ 未找到确定按钮,但继续执行`);
       }
-
-      await new Promise(resolve => setTimeout(resolve, 1500));
 
       this.emitLog(`✅ 成功发送图片给: ${friendName}`);
       return true;

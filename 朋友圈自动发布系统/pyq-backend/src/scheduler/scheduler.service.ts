@@ -45,6 +45,16 @@ export class SchedulerService implements OnModuleInit {
   async onModuleInit() {
     this.logger.log('📋 SchedulerService 模块初始化开始...');
 
+    // 检查是否禁用自动同步
+    const disableAutoSync = process.env.DISABLE_AUTO_SYNC === 'true';
+
+    if (disableAutoSync) {
+      this.logger.warn('⚠️  自动同步已禁用 (DISABLE_AUTO_SYNC=true)');
+      this.logger.warn('   如需启用,请在.env中设置 DISABLE_AUTO_SYNC=false 或删除该配置');
+      this.logger.log('✅ SchedulerService 模块初始化完成 (跳过自动同步)');
+      return;
+    }
+
     // 初始化定时同步任务
     await this.initializeSyncTask();
 
