@@ -1,0 +1,213 @@
+[PM2] Saving current process list...
+[PM2] Successfully saved in /root/.pm2/dump.pm2
+[
+  {
+    "kill_retry_time": 100,
+    "windowsHide": true,
+    "username": "root",
+    "treekill": true,
+    "automation": true,
+    "pmx": true,
+    "instance_var": "NODE_APP_INSTANCE",
+    "watch": false,
+    "autorestart": true,
+    "autostart": true,
+    "vizion": true,
+    "merge_logs": true,
+    "env": {
+      "NVM_DIR": "/root/.nvm",
+      "SSH_CONNECTION": "123.12.102.56 62250 172.17.0.5 22",
+      "LANG": "zh_CN.UTF-8",
+      "HISTTIMEFORMAT": "%F %T ",
+      "OLDPWD": "/root",
+      "NVM_CD_FLAGS": "",
+      "which_declare": "declare -f",
+      "XDG_SESSION_ID": "11158",
+      "USER": "root",
+      "PWD": "/www/wwwroot/pyq-backend",
+      "HOME": "/root",
+      "SSH_CLIENT": "123.12.102.56 62250 22",
+      "SHELL": "/bin/bash",
+      "NVM_BIN": "/root/.nvm/versions/node/v20.19.5/bin",
+      "SHLVL": "1",
+      "PROMPT_COMMAND": "history -a; history -a; ",
+      "LOGNAME": "root",
+      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/0/bus",
+      "XDG_RUNTIME_DIR": "/run/user/0",
+      "PATH": "/root/.nvm/versions/node/v20.19.5/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
+      "NVM_INC": "/root/.nvm/versions/node/v20.19.5/include/node",
+      "HISTSIZE": "3000",
+      "LESSOPEN": "||/usr/bin/lesspipe.sh %s",
+      "BASH_FUNC_which%%": "() {  ( alias;\n eval ${which_declare} ) | /usr/bin/which --tty-only --read-alias --read-functions --show-tilde --show-dot \"$@\"\n}",
+      "_": "/usr/bin/pm2",
+      "PM2_USAGE": "CLI",
+      "PM2_HOME": "/root/.pm2",
+      "pyq-backend": {},
+      "unique_id": "a6b6185e-4fe6-41ae-939d-c2190935b418"
+    },
+    "namespace": "default",
+    "filter_env": [],
+    "name": "pyq-backend",
+    "node_args": [],
+    "pm_exec_path": "/www/wwwroot/pyq-backend/dist/main.js",
+    "source_map_support": true,
+    "pm_cwd": "/www/wwwroot/pyq-backend",
+    "exec_interpreter": "node",
+    "exec_mode": "fork_mode",
+    "pm_out_log_path": "/root/.pm2/logs/pyq-backend-out.log",
+    "pm_err_log_path": "/root/.pm2/logs/pyq-backend-error.log",
+    "pm_pid_path": "/root/.pm2/pids/pyq-backend-1.pid",
+    "km_link": false,
+    "vizion_running": false,
+    "NODE_APP_INSTANCE": 1,
+    "NVM_DIR": "/root/.nvm",
+    "SSH_CONNECTION": "123.12.102.56 62250 172.17.0.5 22",
+    "LANG": "zh_CN.UTF-8",
+    "HISTTIMEFORMAT": "%F %T ",
+    "OLDPWD": "/root",
+    "NVM_CD_FLAGS": "",
+    "which_declare": "declare -f",
+    "XDG_SESSION_ID": "11158",
+    "USER": "root",
+    "PWD": "/www/wwwroot/pyq-backend",
+    "HOME": "/root",
+    "SSH_CLIENT": "123.12.102.56 62250 22",
+    "SHELL": "/bin/bash",
+    "NVM_BIN": "/root/.nvm/versions/node/v20.19.5/bin",
+    "SHLVL": "1",
+    "PROMPT_COMMAND": "history -a; history -a; ",
+    "LOGNAME": "root",
+    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/0/bus",
+    "XDG_RUNTIME_DIR": "/run/user/0",
+    "PATH": "/root/.nvm/versions/node/v20.19.5/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
+    "NVM_INC": "/root/.nvm/versions/node/v20.19.5/include/node",
+    "HISTSIZE": "3000",
+    "LESSOPEN": "||/usr/bin/lesspipe.sh %s",
+    "BASH_FUNC_which%%": "() {  ( alias;\n eval ${which_declare} ) | /usr/bin/which --tty-only --read-alias --read-functions --show-tilde --show-dot \"$@\"\n}",
+    "_": "/usr/bin/pm2",
+    "PM2_USAGE": "CLI",
+    "PM2_HOME": "/root/.pm2",
+    "unique_id": "a6b6185e-4fe6-41ae-939d-c2190935b418",
+    "status": "online",
+    "pm_uptime": 1764991639193,
+    "axm_actions": [
+      {
+        "action_name": "km:heapdump",
+        "action_type": "internal",
+        "arity": 2
+      },
+      {
+        "action_name": "km:cpu:profiling:start",
+        "action_type": "internal",
+        "arity": 2
+      },
+      {
+        "action_name": "km:cpu:profiling:stop",
+        "action_type": "internal",
+        "arity": 1
+      },
+      {
+        "action_name": "km:heap:sampling:start",
+        "action_type": "internal",
+        "arity": 2
+      },
+      {
+        "action_name": "km:heap:sampling:stop",
+        "action_type": "internal",
+        "arity": 1
+      }
+    ],
+    "axm_monitor": {
+      "Used Heap Size": {
+        "value": "54.08",
+        "type": "internal/v8/heap/used",
+        "unit": "MiB",
+        "historic": true
+      },
+      "Heap Usage": {
+        "value": 89.33,
+        "type": "internal/v8/heap/usage",
+        "unit": "%",
+        "historic": true
+      },
+      "Heap Size": {
+        "value": "60.54",
+        "type": "internal/v8/heap/total",
+        "unit": "MiB",
+        "historic": true
+      },
+      "Event Loop Latency p95": {
+        "value": "1.22",
+        "type": "internal/libuv/latency/p95",
+        "unit": "ms",
+        "historic": true
+      },
+      "Event Loop Latency": {
+        "value": "0.32",
+        "type": "internal/libuv/latency/p50",
+        "unit": "ms",
+        "historic": true
+      },
+      "Active handles": {
+        "value": 4,
+        "type": "internal/libuv/handles",
+        "historic": true
+      },
+      "Active requests": {
+        "value": 0,
+        "type": "internal/libuv/requests",
+        "historic": true
+      },
+      "HTTP": {
+        "value": 0,
+        "type": "internal/http/builtin/reqs",
+        "unit": "req/min",
+        "historic": true
+      },
+      "HTTP P95 Latency": {
+        "value": 1321.6499999999871,
+        "type": "internal/http/builtin/latency/p95",
+        "unit": "ms",
+        "historic": true
+      },
+      "HTTP Mean Latency": {
+        "value": 104,
+        "type": "internal/http/builtin/latency/p50",
+        "unit": "ms",
+        "historic": true
+      }
+    },
+    "axm_options": {
+      "error": true,
+      "heapdump": true,
+      "feature.profiler.heapsnapshot": false,
+      "feature.profiler.heapsampling": true,
+      "feature.profiler.cpu_js": true,
+      "latency": true,
+      "catchExceptions": true,
+      "profiling": true,
+      "metrics": {
+        "http": true,
+        "runtime": true,
+        "eventLoop": true,
+        "network": false,
+        "v8": true
+      },
+      "standalone": false,
+      "module_conf": {},
+      "apm": {
+        "version": "6.1.0",
+        "type": "node"
+      },
+      "module_name": "pyq-backend",
+      "module_version": "6.0.13"
+    },
+    "axm_dynamic": {},
+    "created_at": 1764991639065,
+    "restart_time": 52,
+    "unstable_restarts": 0,
+    "version": "4.1.0",
+    "node_version": "20.19.5",
+    "exit_code": 0
+  }
+]
