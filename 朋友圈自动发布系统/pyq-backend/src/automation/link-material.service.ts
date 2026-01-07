@@ -24,7 +24,10 @@ export class LinkMaterialService {
     this.logger.log('🔐 开始登录堆雪球客服端...');
 
     // 访问客服端登录页面
-    await page.goto('https://dxqscrm.duixueqiu.cn/user/login/', { waitUntil: 'networkidle2' });
+    await page.goto('https://dxqscrm.duixueqiu.cn/user/login/', {
+      waitUntil: 'networkidle2',
+      timeout: 300000 // 5分钟超时
+    });
 
     // 等待登录表单加载
     await page.waitForSelector('input[placeholder="账号"]', { timeout: 10000 });

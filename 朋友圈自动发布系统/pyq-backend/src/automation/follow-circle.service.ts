@@ -655,7 +655,10 @@ export class FollowCircleService {
 
       // 登录
       this.logger.log('登录堆雪球...');
-      await page.goto('https://dxqscrm.duixueqiu.cn/admin/#/login', { waitUntil: 'networkidle2' });
+      await page.goto('https://dxqscrm.duixueqiu.cn/admin/#/login', {
+        waitUntil: 'networkidle2',
+        timeout: 300000 // 5分钟超时
+      });
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       // 填写账号(可能已经自动填充)

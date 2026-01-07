@@ -161,8 +161,11 @@ export class WechatReachService {
   private async loginDuixueqiu(page: puppeteer.Page, username: string, password: string): Promise<void> {
     this.emitLog('🔐 开始登录堆雪球系统...');
 
-    // 访问客服端登录页面
-    await page.goto('https://dxqscrm.duixueqiu.cn/user/login/', { waitUntil: 'networkidle2' });
+    // 访问客服端登录页面 (使用domcontentloaded,避免networkidle2在服务器环境下永远等不到)
+    await page.goto('https://dxqscrm.duixueqiu.cn/user/login/', {
+      waitUntil: 'domcontentloaded', // 改为domcontentloaded,更快更稳定
+      timeout: 60000 // 60秒超时
+    });
 
     // 等待登录表单加载
     await page.waitForSelector('input[placeholder="账号"]', { timeout: 10000 });
@@ -184,8 +187,8 @@ export class WechatReachService {
       }
     });
 
-    // 等待导航完成
-    await page.waitForNavigation({ waitUntil: 'networkidle2' });
+    // 等待导航完成 (使用domcontentloaded,避免networkidle2超时)
+    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 });
 
     this.emitLog('✅ 登录成功');
 
@@ -444,6 +447,11 @@ export class WechatReachService {
         ],
       });
       page = await browser.newPage();
+
+      // 🆕 设置默认超时时间为5分钟,避免服务器网络慢导致超时
+      page.setDefaultNavigationTimeout(300000); // 5分钟
+      page.setDefaultTimeout(300000); // 5分钟
+      this.logger.log('✅ 已设置默认超时时间为300秒(5分钟)');
 
       // 设置真实的User-Agent
       await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
@@ -2715,7 +2723,8 @@ export class WechatReachService {
   private async sendImageToFriend(
     page: puppeteer.Page,
     friendName: string,
-    imageBase64Array: string[]
+    imageBase64Array: string[],
+    skipOpenChat: boolean = false // 🆕 是否跳过打开聊天窗口(组合发送时使用)
   ): Promise<boolean> {
     const fs = require('fs');
     const path = require('path');
@@ -2724,12 +2733,16 @@ export class WechatReachService {
     try {
       this.emitLog(`🖼️ 开始发送图片给: ${friendName} (共${imageBase64Array.length}张)`);
 
-      // 1. 滚动查找并点击好友打开聊天窗口
-      const friendFound = await this.findAndClickFriend(page, friendName);
-      if (!friendFound) {
-        throw new Error(`未找到好友: ${friendName}`);
+      // 1. 滚动查找并点击好友打开聊天窗口 (组合发送时跳过)
+      if (!skipOpenChat) {
+        const friendFound = await this.findAndClickFriend(page, friendName);
+        if (!friendFound) {
+          throw new Error(`未找到好友: ${friendName}`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } else {
+        this.emitLog(`⏭️ 跳过打开聊天窗口(已在组合发送中打开)`);
       }
-      await new Promise(resolve => setTimeout(resolve, 1000));
 
       // 2. 转换Base64为本地临时文件
       this.emitLog(`📥 处理图片数据...`);
@@ -3092,7 +3105,7 @@ export class WechatReachService {
 
           case 'image':
             this.emitLog(`🖼️ 发送图片...`);
-            sendSuccess = await this.sendImageToFriend(page, friendName, content.imageUrls);
+            sendSuccess = await this.sendImageToFriend(page, friendName, content.imageUrls, true); // 🆕 传入true跳过打开聊天窗口
             if (!sendSuccess) {
               this.emitLog(`⚠️ 图片发送失败,继续发送其他内容`);
             }

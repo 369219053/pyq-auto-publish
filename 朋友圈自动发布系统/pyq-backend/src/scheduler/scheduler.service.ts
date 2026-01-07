@@ -45,21 +45,11 @@ export class SchedulerService implements OnModuleInit {
   async onModuleInit() {
     this.logger.log('📋 SchedulerService 模块初始化开始...');
 
-    // 检查是否禁用自动同步
-    const disableAutoSync = process.env.DISABLE_AUTO_SYNC === 'true';
-
-    if (disableAutoSync) {
-      this.logger.warn('⚠️  自动同步已禁用 (DISABLE_AUTO_SYNC=true)');
-      this.logger.warn('   如需启用,请在.env中设置 DISABLE_AUTO_SYNC=false 或删除该配置');
-      this.logger.log('✅ SchedulerService 模块初始化完成 (跳过自动同步)');
-      return;
-    }
-
-    // 初始化定时同步任务
+    // 初始化定时同步任务(公众号文章RSS同步,不影响堆雪球)
     await this.initializeSyncTask();
 
-    // 初始化素材同步任务
-    await this.initializeMaterialSyncTask();
+    // 🚫 已禁用素材同步任务(避免顶掉堆雪球账号)
+    // await this.initializeMaterialSyncTask();
 
     // 确保Storage Bucket存在
     try {
@@ -240,7 +230,8 @@ export class SchedulerService implements OnModuleInit {
     try {
       this.logger.log('🔧 开始初始化素材同步任务...');
 
-      const intervalMinutes = await this.configService.getMaterialSyncInterval();
+      // 🚫 已禁用,使用固定间隔60分钟
+      const intervalMinutes = 60; // await this.configService.getMaterialSyncInterval();
       this.logger.log(`⏰ 从配置中获取素材同步间隔: ${intervalMinutes} 分钟`);
 
       await this.restartMaterialSyncTask(intervalMinutes);
