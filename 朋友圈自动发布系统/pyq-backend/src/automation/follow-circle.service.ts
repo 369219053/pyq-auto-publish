@@ -564,6 +564,13 @@ export class FollowCircleService {
   }
 
   /**
+   * 🆕 供Scheduler调用的公开方法 - 根据任务对象发布朋友圈
+   */
+  async publishCircleByTask(task: any): Promise<void> {
+    return this.publishCircle(task);
+  }
+
+  /**
    * 发布朋友圈(带重试机制)
    */
   private async publishCircle(task: any): Promise<void> {
@@ -788,12 +795,13 @@ export class FollowCircleService {
         });
         this.logger.log(`📋 页面上的所有任务标题: ${JSON.stringify(allTitles)}`);
 
-        // 🔍 智能识别按钮类型: "停止" 或 "删除"
+        // 🔍 智能识别按钮类型: "停止" 或 "删除" (使用精确匹配避免误删)
         const buttonResult = await page.evaluate((titleToDelete: string) => {
           const rows = document.querySelectorAll('tr');
           for (const row of rows) {
             const titleCell = row.querySelector('td');
-            if (titleCell && titleCell.textContent?.includes(titleToDelete)) {
+            // 🔥 修复: 使用精确匹配而不是includes,避免误删相似标题的任务
+            if (titleCell && titleCell.textContent?.trim() === titleToDelete) {
               const buttons = row.querySelectorAll('button');
               for (const btn of buttons) {
                 const text = btn.textContent?.trim();
@@ -855,7 +863,8 @@ export class FollowCircleService {
                   const rows = document.querySelectorAll('tr');
                   for (const row of rows) {
                     const titleCell = row.querySelector('td');
-                    if (titleCell && titleCell.textContent?.includes(titleToDelete)) {
+                    // 🔥 修复: 使用精确匹配而不是includes,避免误删相似标题的任务
+                    if (titleCell && titleCell.textContent?.trim() === titleToDelete) {
                       const buttons = row.querySelectorAll('button');
                       for (const btn of buttons) {
                         if (btn.textContent?.includes('删除')) {

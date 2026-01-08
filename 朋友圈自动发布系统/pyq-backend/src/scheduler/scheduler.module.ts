@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { SchedulerService } from './scheduler.service';
 import { WechatMonitorModule } from '../wechat-monitor/wechat-monitor.module';
@@ -20,7 +20,7 @@ import { Pool } from 'pg';
     PublishModule,
     PuppeteerModule,
     StorageModule,
-    AutomationModule,
+    forwardRef(() => AutomationModule), // 🆕 使用forwardRef避免循环依赖
   ],
   providers: [
     SchedulerService,

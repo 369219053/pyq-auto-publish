@@ -1248,12 +1248,12 @@ export class DuixueqiuFriendsService {
   /**
    * 获取好友列表(从数据库)
    * 使用分页查询避免Supabase默认1000条限制和查询超时
-   * 优化策略: 使用大批次(5000)提高速度,依赖数据库索引而非减小批次
+   * 优化策略: 使用小批次(500)避免超时,牺牲速度换取稳定性
    */
   async getFriends(userId: string): Promise<any[]> {
     let allData = [];
     let start = 0;
-    const limit = 5000; // 🔧 使用大批次提高速度,依赖数据库索引优化
+    const limit = 500; // 🔧 减小批次避免超时(从5000降到500)
 
     this.logger.log(`开始获取好友列表: userId=${userId}`);
 

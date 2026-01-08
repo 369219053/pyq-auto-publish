@@ -1,5 +1,6 @@
 import { Injectable, Logger, Inject, OnModuleInit } from '@nestjs/common';
 import { SchedulerRegistry, Cron, CronExpression } from '@nestjs/schedule';
+import { ModuleRef } from '@nestjs/core';
 import { WechatMonitorService } from '../wechat-monitor/wechat-monitor.service';
 import { ConfigService } from '../config/config.service';
 import { PublishService } from '../publish/publish.service';
@@ -24,6 +25,7 @@ export class SchedulerService implements OnModuleInit {
   private isProcessingPublish = false;
   private isProcessingDelete = false; // 防止重复执行删除任务
   private isProcessingMaterialSync = false; // 防止重复执行素材同步
+  private isProcessingFollowCircle = false; // 🆕 防止重复执行跟圈任务
 
   constructor(
     private readonly wechatMonitorService: WechatMonitorService,
@@ -36,6 +38,7 @@ export class SchedulerService implements OnModuleInit {
     private readonly duixueqiuFriendsService: DuixueqiuFriendsService,
     private readonly videoMaterialService: VideoMaterialService,
     private readonly linkMaterialService: LinkMaterialService,
+    private readonly moduleRef: ModuleRef, // 🆕 使用ModuleRef动态获取服务
     @Inject('DATABASE_POOL') private readonly pool: Pool,
   ) {}
 
@@ -567,6 +570,71 @@ export class SchedulerService implements OnModuleInit {
       this.logger.error('❌ 检查删除任务失败:', error);
     } finally {
       this.isProcessingDelete = false;
+    }
+  }
+
+  /**
+   * 🆕 每分钟检查一次待执行的跟圈任务
+   * 解决服务重启或内存定时器丢失导致任务不执行的问题
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async checkFollowCircleTasks() {
+    if (this.isProcessingFollowCircle) {
+      this.logger.log('⏳ 上一个跟圈任务还在处理中,跳过本次检查');
+      return;
+    }
+
+    try {
+      this.isProcessingFollowCircle = true;
+      this.logger.log('🔍 检查待执行的跟圈任务...');
+
+      const now = new Date();
+
+      // 查询所有待执行的任务 (status='pending' 且 publish_time <= 当前时间)
+      const { data: tasks, error } = await this.supabaseService.getClient()
+        .from('follow_circle_tasks')
+        .select('*')
+        .eq('status', 'pending')
+        .lte('publish_time', now.toISOString())
+        .order('publish_time', { ascending: true })
+        .limit(10); // 每次最多处理10个任务
+
+      if (error) {
+        this.logger.error(`❌ 查询跟圈任务失败: ${error.message}`);
+        throw error;
+      }
+
+      if (!tasks || tasks.length === 0) {
+        this.logger.log('✅ 没有待执行的跟圈任务');
+        return;
+      }
+
+      this.logger.log(`📋 发现 ${tasks.length} 个待执行的跟圈任务`);
+
+      // 🆕 动态获取FollowCircleService (避免循环依赖)
+      const { FollowCircleService } = await import('../automation/follow-circle.service');
+      const followCircleService = this.moduleRef.get(FollowCircleService, { strict: false });
+
+      // 逐个处理任务
+      for (const task of tasks) {
+        try {
+          this.logger.log(`📤 开始执行跟圈任务: 组${task.task_group_id} 第${task.circle_index}条`);
+
+          // 调用FollowCircleService的发布方法
+          await followCircleService.publishCircleByTask(task);
+
+          this.logger.log(`✅ 跟圈任务执行成功: 组${task.task_group_id} 第${task.circle_index}条`);
+        } catch (error) {
+          this.logger.error(`❌ 跟圈任务执行失败: 组${task.task_group_id} 第${task.circle_index}条`, error);
+          // 继续处理下一个任务
+        }
+      }
+
+      this.logger.log('🎉 本轮跟圈任务检查完成');
+    } catch (error) {
+      this.logger.error('❌ 检查跟圈任务失败:', error);
+    } finally {
+      this.isProcessingFollowCircle = false;
     }
   }
 
