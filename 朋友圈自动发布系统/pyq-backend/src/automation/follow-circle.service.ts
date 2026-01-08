@@ -397,15 +397,18 @@ export class FollowCircleService {
         this.gateway.emitLog(taskGroupId, `✅ 已从任务队列移除${pendingTasks.length}个任务`);
       }
 
-      // 5. 删除数据库中所有未执行的任务
+      // 5. 🔥 修复: 将pending任务状态改为cancelled,而不是删除(更安全,有记录)
       const { error } = await this.supabaseService.getClient()
         .from('follow_circle_tasks')
-        .delete()
+        .update({
+          status: 'cancelled',
+          updated_at: new Date().toISOString(),
+        })
         .eq('task_group_id', taskGroupId)
         .eq('status', 'pending');
 
       if (error) {
-        throw new Error(`删除数据库任务失败: ${error.message}`);
+        throw new Error(`更新任务状态失败: ${error.message}`);
       }
 
       this.logger.log(`✅ 跟圈任务已停止: ${taskGroupId}`);

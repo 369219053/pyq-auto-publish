@@ -589,13 +589,16 @@ export class SchedulerService implements OnModuleInit {
       this.logger.log('🔍 检查待执行的跟圈任务...');
 
       const now = new Date();
+      // 🔥 修复: 只执行24小时内创建的任务,避免执行很久以前的旧任务
+      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-      // 查询所有待执行的任务 (status='pending' 且 publish_time <= 当前时间)
+      // 查询所有待执行的任务 (status='pending' 且 publish_time <= 当前时间 且 created_at >= 24小时前)
       const { data: tasks, error } = await this.supabaseService.getClient()
         .from('follow_circle_tasks')
         .select('*')
         .eq('status', 'pending')
         .lte('publish_time', now.toISOString())
+        .gte('created_at', oneDayAgo.toISOString()) // 🔥 只查询24小时内创建的任务
         .order('publish_time', { ascending: true })
         .limit(10); // 每次最多处理10个任务
 
