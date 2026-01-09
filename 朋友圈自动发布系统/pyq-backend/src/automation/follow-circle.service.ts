@@ -16,6 +16,9 @@ export class FollowCircleService {
   private readonly logger = new Logger(FollowCircleService.name);
   private scheduledJobs: Map<string, schedule.Job> = new Map();
 
+  // 🆕 添加任务执行锁,防止并发执行
+  private taskExecutionLock: Map<string, boolean> = new Map();
+
   constructor(
     private readonly puppeteerService: PuppeteerService,
     private readonly taskQueueService: TaskQueueService,
@@ -368,8 +371,10 @@ export class FollowCircleService {
       const jobsToCancel: string[] = [];
       this.scheduledJobs.forEach((job, key) => {
         if (key.startsWith(taskGroupId)) {
-          job.cancel();
-          jobsToCancel.push(key);
+          if (job && typeof job.cancel === 'function') {
+            job.cancel();
+            jobsToCancel.push(key);
+          }
         }
       });
 
@@ -513,6 +518,7 @@ export class FollowCircleService {
             this.gateway.emitLog(taskGroupId, `⏰ 定时任务触发,准备发布第${task.circle_index}条朋友圈...`);
 
             // 发布新的朋友圈(内部会先删除上一条,再发布新的)
+            // publishCircle内部已经有锁机制,这里不需要再加锁
             await this.publishCircle(task);
 
             // 3. 清理定时任务
@@ -577,37 +583,74 @@ export class FollowCircleService {
    * 发布朋友圈(带重试机制)
    */
   private async publishCircle(task: any): Promise<void> {
-    const maxRetries = 3; // 最多重试3次
-    let lastError: Error | null = null;
+    // 🔒 获取全局执行锁,防止多个任务并发执行
+    const lockKey = 'follow_circle_execution';
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        this.logger.log(`📤 第${attempt}次尝试发布朋友圈: 自动跟圈${task.circle_index}`);
-        if (attempt > 1) {
-          this.gateway.emitLog(task.task_group_id, `🔄 第${attempt}次重试发布第${task.circle_index}条朋友圈...`);
-        }
+    if (this.taskExecutionLock.get(lockKey)) {
+      this.logger.warn(`⚠️ 有其他跟圈任务正在执行,等待完成...`);
+      this.gateway.emitLog(task.task_group_id, `⏳ 等待其他任务完成...`);
 
-        await this.publishCircleInternal(task);
+      // 等待其他任务完成,最多等待5分钟
+      let waitCount = 0;
+      while (this.taskExecutionLock.get(lockKey) && waitCount < 300) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        waitCount++;
+      }
 
-        // 成功则返回
-        return;
-      } catch (error) {
-        lastError = error;
-        this.logger.error(`第${attempt}次发布失败: ${error.message}`);
-
-        if (attempt < maxRetries) {
-          const waitTime = attempt * 2; // 递增等待时间: 2秒, 4秒, 6秒
-          this.logger.log(`⏳ 等待${waitTime}秒后重试...`);
-          this.gateway.emitLog(task.task_group_id, `⏳ 等待${waitTime}秒后重试...`);
-          await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
-        }
+      if (this.taskExecutionLock.get(lockKey)) {
+        throw new Error('等待其他任务超时(5分钟)');
       }
     }
 
-    // 所有重试都失败
-    this.logger.error(`❌ 发布朋友圈失败,已重试${maxRetries}次: ${lastError?.message}`);
-    this.gateway.emitLog(task.task_group_id, `❌ 第${task.circle_index}条朋友圈发布失败,已重试${maxRetries}次`);
-    throw lastError;
+    // 🔒 获取执行锁
+    this.taskExecutionLock.set(lockKey, true);
+    this.logger.log(`🔒 已获取执行锁,开始发布任务: ${task.task_group_id}_${task.circle_index}`);
+
+    try {
+      const maxRetries = 3; // 最多重试3次
+      let lastError: Error | null = null;
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          this.logger.log(`📤 第${attempt}次尝试发布朋友圈: 自动跟圈${task.circle_index}`);
+          if (attempt > 1) {
+            this.gateway.emitLog(task.task_group_id, `🔄 第${attempt}次重试发布第${task.circle_index}条朋友圈...`);
+          }
+
+          await this.publishCircleInternal(task);
+
+          // 成功则返回
+          this.logger.log(`🔓 发布成功,释放执行锁: ${task.task_group_id}_${task.circle_index}`);
+          this.taskExecutionLock.delete(lockKey);
+          return;
+        } catch (error) {
+          lastError = error;
+          this.logger.error(`第${attempt}次发布失败: ${error.message}`);
+
+          if (attempt < maxRetries) {
+            const waitTime = attempt * 2; // 递增等待时间: 2秒, 4秒, 6秒
+            this.logger.log(`⏳ 等待${waitTime}秒后重试...`);
+            this.gateway.emitLog(task.task_group_id, `⏳ 等待${waitTime}秒后重试...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
+          }
+        }
+      }
+
+      // 所有重试都失败
+      this.logger.error(`❌ 发布朋友圈失败,已重试${maxRetries}次: ${lastError?.message}`);
+      this.gateway.emitLog(task.task_group_id, `❌ 第${task.circle_index}条朋友圈发布失败,已重试${maxRetries}次`);
+
+      // 🔓 释放执行锁
+      this.logger.log(`🔓 发布失败,释放执行锁: ${task.task_group_id}_${task.circle_index}`);
+      this.taskExecutionLock.delete(lockKey);
+
+      throw lastError;
+    } catch (error) {
+      // 🔓 确保异常时也释放执行锁
+      this.logger.log(`🔓 异常释放执行锁: ${task.task_group_id}_${task.circle_index}`);
+      this.taskExecutionLock.delete(lockKey);
+      throw error;
+    }
   }
 
   /**
@@ -1295,10 +1338,6 @@ export class FollowCircleService {
       await browser.close();
       browser = null;
 
-      // 🆕 标记浏览器为等待状态,允许执行其他短任务
-      this.taskQueueService.markBrowserWaiting();
-      this.logger.log('🔓 浏览器已释放,可以执行其他短任务');
-
       // 更新任务状态
       await this.supabaseService.getClient()
         .from('follow_circle_tasks')
@@ -1364,7 +1403,9 @@ export class FollowCircleService {
       // 取消所有定时任务
       for (const [jobName, job] of this.scheduledJobs.entries()) {
         if (jobName.startsWith(taskGroupId)) {
-          job.cancel();
+          if (job && typeof job.cancel === 'function') {
+            job.cancel();
+          }
           this.scheduledJobs.delete(jobName);
           this.logger.log(`取消定时任务: ${jobName}`);
         }
